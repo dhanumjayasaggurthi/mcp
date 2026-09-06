@@ -1,0 +1,49 @@
+name: enterprise-platform-ci
+
+on:
+  pull_request:
+  push:
+    branches: [main, enterprise-data-platform]
+
+jobs:
+  python-gates:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Materialize implementation source
+        run: |
+          chmod +x scripts/materialize_source.sh
+          ./scripts/materialize_source.sh
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install platform dependencies
+        working-directory: enterprise_delivery/platform_v1
+        run: pip install -e '.[test]' uvicorn
+      - name: Enterprise v1 tests
+        working-directory: enterprise_delivery/platform_v1
+        run: PYTHONPATH=. pytest -q tests
+      - name: Compile Python
+        working-directory: enterprise_delivery/platform_v1
+        run: python -m compileall -q enterprise_data_platform
+      - name: Legacy remediation tests
+        working-directory: enterprise_delivery
+        run: PYTHONPATH=. pytest -q tests
+
+  control-hub-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Materialize implementation source
+        run: |
+          chmod +x scripts/materialize_source.sh
+          ./scripts/materialize_source.sh
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install UI dependencies
+        working-directory: enterprise_delivery/platform_v1/frontend
+        run: npm install
+      - name: Build Control Hub
+        working-directory: enterprise_delivery/platform_v1/frontend
+        run: npm run build

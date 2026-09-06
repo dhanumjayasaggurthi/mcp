@@ -1,0 +1,46 @@
+name: unpack-complete-source
+
+on:
+  push:
+    branches: [enterprise-data-platform]
+    paths:
+      - '.github/workflows/unpack-source.yml'
+      - 'artifacts/Enterprise_Data_Retrieval_Control_Hub_Implementation_Starter.zip'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  unpack:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout working branch
+        uses: actions/checkout@v4
+        with:
+          ref: enterprise-data-platform
+          fetch-depth: 0
+
+      - name: Expand implementation source
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f artifacts/Enterprise_Data_Retrieval_Control_Hub_Implementation_Starter.zip
+          unzip -o artifacts/Enterprise_Data_Retrieval_Control_Hub_Implementation_Starter.zip -d .
+          find enterprise_delivery -type d -name '__pycache__' -prune -exec rm -rf {} + || true
+          find enterprise_delivery -type d -name '.pytest_cache' -prune -exec rm -rf {} + || true
+          find enterprise_delivery -type f \( -name '*.pyc' -o -name '*.db' \) -delete || true
+
+      - name: Commit expanded source
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add enterprise_delivery
+          if git diff --cached --quiet; then
+            echo 'Source already expanded; nothing to commit.'
+            exit 0
+          fi
+          git commit -m 'chore: expand complete enterprise platform source'
+          git push origin HEAD:enterprise-data-platform
