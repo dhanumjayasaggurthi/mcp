@@ -1,0 +1,24 @@
+services:
+  api:
+    build: .
+    environment:
+      EDP_REFERENCE_MODE: "true"
+      EDP_CURSOR_SECRET: "replace-this-reference-secret-before-shared-testing"
+      EDP_CORS_ORIGINS: "http://localhost:5173"
+    ports:
+      - "8080:8080"
+
+  control-hub:
+    image: node:22-alpine
+    working_dir: /app
+    volumes:
+      - ./frontend:/app
+      - ./utils:/utils:ro
+    environment:
+      VITE_API_BASE_URL: "http://localhost:8080"
+      VITE_REFERENCE_MODE: "true"
+    command: sh -c "npm install && npm run dev -- --host 0.0.0.0"
+    ports:
+      - "5173:5173"
+    depends_on:
+      - api
