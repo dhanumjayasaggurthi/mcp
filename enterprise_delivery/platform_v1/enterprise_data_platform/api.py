@@ -1,0 +1,277 @@
+from __future__ import annotations
+
+from typing import Callable
+
+from fastapi import Depends, FastAPI, HTTPException, Request, Response, status
+
+from .catalog import CatalogConflict, CatalogNotFound, CatalogStore
+from .control_models import AgentRegistration, ClientRegistration, ControlOverview, GuardrailRule, IndexDeployment, ManagedStatus
+from .control_state import ControlState, ResourceNotFound
+from .cursor import CursorError
+from .models import (
+    AccessPolicy,
+    ExportJob,
+    ExportRequest,
+    Principal,
+    RetrievalResponse,
+    RetrieveRequest,
+    SearchRequest,
+    StructuredQueryRequest,
+    StructuredQueryResponse,
+    VectorSearchRequest,
+)
+from .policy import PolicyEngine
+from .query_validation import QueryValidationError
+from .services import AccessDenied, CapabilityUnavailable, PlatformService
+from .promotion import IndexPromotionController, RetrievalQualityEvidence, PromotionBlocked
+
+PrincipalResolver = Callable[[Request], Principal]
+ControlAdminCheck = Callable[[Principal], bool]
+
+
+def create_app(
+    *,
+    service: PlatformService,
+    catalog: CatalogStore,
+    policies: PolicyEngine,
+    control_state: ControlState,
+    principal_resolver: PrincipalResolver,
+    control_admin_check: ControlAdminCheck,
+    promotion_controller: IndexPromotionController | None = None,
+) -> FastAPI:
+    """Create the v1 API application.
+
+    Authentication is deliberately injected. There is no insecure default header
+    identity adapter; production must wire OIDC/workload identity/mTLS at the
+    gateway or via a resolver supplied by the host application.
+    """
+
+    app = FastAPI(title="Enterprise Governed Data Retrieval API", version="1.0.0")
+    promotion_controller = promotion_controller or IndexPromotionController()
+
+    def principal_dep(request: Request) -> Principal:
+        return principal_resolver(request)
+
+    def admin_dep(principal: Principal = Depends(principal_dep)) -> Principal:
+        if not control_admin_check(principal):
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="control hub administrator permission required")
+        return principal
+
+    @app.exception_handler(AccessDenied)
+    async def access_denied_handler(_: Request, exc: AccessDenied):
+        return _json_error(status.HTTP_403_FORBIDDEN, str(exc))
+
+    @app.exception_handler(CatalogNotFound)
+    async def catalog_not_found_handler(_: Request, exc: CatalogNotFound):
+        return _json_error(status.HTTP_404_NOT_FOUND, f"dataset not found: {exc.args[0]}")
+
+    @app.exception_handler(ResourceNotFound)
+    async def resource_not_found_handler(_: Request, exc: ResourceNotFound):
+        return _json_error(status.HTTP_404_NOT_FOUND, f"resource not found: {exc.args[0]}")
+
+    async def bad_request_handler(_: Request, exc: Exception):
+        return _json_error(status.HTTP_400_BAD_REQUEST, str(exc))
+
+    app.add_exception_handler(QueryValidationError, bad_request_handler)
+    app.add_exception_handler(CursorError, bad_request_handler)
+    app.add_exception_handler(ValueError, bad_request_handler)
+
+    @app.exception_handler(CapabilityUnavailable)
+    async def capability_unavailable_handler(_: Request, exc: CapabilityUnavailable):
+        return _json_error(status.HTTP_503_SERVICE_UNAVAILABLE, str(exc))
+
+    @app.exception_handler(CatalogConflict)
+    async def conflict_handler(_: Request, exc: CatalogConflict):
+        return _json_error(status.HTTP_409_CONFLICT, str(exc))
+
+    @app.exception_handler(PromotionBlocked)
+    async def promotion_blocked_handler(_: Request, exc: PromotionBlocked):
+        return _json_error(status.HTTP_409_CONFLICT, str(exc))
+
+    @app.get("/v1/health")
+    def health():
+        return {"status": "healthy", "api_version": "v1"}
+
+    @app.get("/v1/datasets")
+    def list_datasets(principal: Principal = Depends(principal_dep)):
+        visible = []
+        for product in catalog.list():
+            # Discovery does not leak inaccessible products. A product is visible
+            # if the principal has any matching allow policy for discover or one
+            # of its enabled data capabilities.
+            for capability in product.capabilities:
+                decision = policies.evaluate(principal=principal, product=product, operation=capability)
+                if decision.allowed:
+                    visible.append(
+                        {
+                            "id": product.id,
+                            "display_name": product.display_name,
+                            "description": product.description,
+                            "version": product.version,
+                            "status": product.status,
+                            "capabilities": sorted(c.value for c in product.capabilities),
+                        }
+                    )
+                    break
+        return {"datasets": visible}
+
+    @app.get("/v1/datasets/{dataset_id}/schema")
+    def schema(dataset_id: str, principal: Principal = Depends(principal_dep)):
+        product = catalog.get(dataset_id)
+        # Use QUERY as the discovery authorization fallback; if unavailable, any
+        # enabled retrieval capability can authorize schema visibility.
+        decisions = [policies.evaluate(principal=principal, product=product, operation=c) for c in product.capabilities]
+        allowed = [d for d in decisions if d.allowed]
+        if not allowed:
+            raise AccessDenied("schema access denied")
+        fields = set().union(*(d.allowed_fields for d in allowed))
+        return {
+            "dataset_id": product.id,
+            "version": product.version,
+            "identity_fields": product.identity_fields,
+            "fields": [f.model_dump() for f in product.fields if f.name in fields],
+        }
+
+    @app.get("/v1/datasets/{dataset_id}/capabilities")
+    def capabilities(dataset_id: str, principal: Principal = Depends(principal_dep)):
+        product = catalog.get(dataset_id)
+        enabled = []
+        for capability in product.capabilities:
+            decision = policies.evaluate(principal=principal, product=product, operation=capability)
+            if decision.allowed:
+                enabled.append(capability.value)
+        return {"dataset_id": dataset_id, "capabilities": sorted(enabled)}
+
+    @app.post("/v1/datasets/{dataset_id}/query", response_model=StructuredQueryResponse)
+    def query(dataset_id: str, body: StructuredQueryRequest, principal: Principal = Depends(principal_dep)):
+        return service.query(principal, dataset_id, body)
+
+    @app.post("/v1/datasets/{dataset_id}/search/keyword", response_model=RetrievalResponse)
+    def keyword(dataset_id: str, body: SearchRequest, principal: Principal = Depends(principal_dep)):
+        return service.keyword_search(principal, dataset_id, body)
+
+    @app.post("/v1/datasets/{dataset_id}/search/vector", response_model=RetrievalResponse)
+    def vector(dataset_id: str, body: VectorSearchRequest, principal: Principal = Depends(principal_dep)):
+        return service.vector_search(principal, dataset_id, body)
+
+    @app.post("/v1/datasets/{dataset_id}/search/hybrid", response_model=RetrievalResponse)
+    def hybrid(dataset_id: str, body: SearchRequest, principal: Principal = Depends(principal_dep)):
+        return service.hybrid_search(principal, dataset_id, body)
+
+    @app.post("/v1/datasets/{dataset_id}/retrieve", response_model=RetrievalResponse)
+    def retrieve(dataset_id: str, body: RetrieveRequest, principal: Principal = Depends(principal_dep)):
+        return service.retrieve(principal, dataset_id, body)
+
+    @app.post("/v1/datasets/{dataset_id}/exports", response_model=ExportJob, status_code=status.HTTP_202_ACCEPTED)
+    def export(dataset_id: str, body: ExportRequest, principal: Principal = Depends(principal_dep)):
+        return service.export(principal, dataset_id, body)
+
+    # ---------------------------- Control Hub ----------------------------
+    @app.get("/v1/control/overview", response_model=ControlOverview)
+    def control_overview(_: Principal = Depends(admin_dep)):
+        indexes = control_state.indexes.list()
+        clients = control_state.clients.list()
+        agents = control_state.agents.list()
+        degraded = sum(1 for i in indexes if i.state in {"degraded", "failed"})
+        return ControlOverview(
+            datasets=len(catalog.list()),
+            policies=len(policies.list()),
+            clients=len(clients),
+            agents=len(agents),
+            guardrails=len(control_state.guardrails.list()),
+            indexes=len(indexes),
+            healthy_indexes=sum(1 for i in indexes if i.state == "healthy"),
+            degraded_indexes=degraded,
+            active_clients=sum(1 for c in clients if c.status == ManagedStatus.ACTIVE),
+            active_agents=sum(1 for a in agents if a.status == ManagedStatus.ACTIVE),
+            control_plane_status="degraded" if degraded else "healthy",
+        )
+
+    @app.get("/v1/control/datasets")
+    def control_datasets(_: Principal = Depends(admin_dep)):
+        return {"datasets": [p.model_dump(mode="json") for p in catalog.list()]}
+
+    @app.put("/v1/control/datasets/{dataset_id}")
+    def put_dataset(dataset_id: str, body: dict, response: Response, expected_version: str | None = None, _: Principal = Depends(admin_dep)):
+        from .models import DataProduct
+
+        product = DataProduct.model_validate({**body, "id": dataset_id})
+        saved = catalog.put(product, expected_version=expected_version)
+        response.headers["ETag"] = saved.version
+        return saved.model_dump(mode="json")
+
+    @app.get("/v1/control/policies")
+    def list_policies(_: Principal = Depends(admin_dep)):
+        return {"policies": [p.model_dump(mode="json") for p in policies.list()]}
+
+    @app.put("/v1/control/policies/{policy_id}")
+    def put_policy(policy_id: str, body: dict, _: Principal = Depends(admin_dep)):
+        policy = AccessPolicy.model_validate({**body, "id": policy_id})
+        policies.put(policy)
+        return policy.model_dump(mode="json")
+
+    @app.delete("/v1/control/policies/{policy_id}", status_code=status.HTTP_204_NO_CONTENT)
+    def delete_policy(policy_id: str, _: Principal = Depends(admin_dep)):
+        policies.delete(policy_id)
+
+    _register_registry_routes(app, "clients", control_state.clients, ClientRegistration, admin_dep)
+    _register_registry_routes(app, "agents", control_state.agents, AgentRegistration, admin_dep)
+    _register_registry_routes(app, "guardrails", control_state.guardrails, GuardrailRule, admin_dep)
+    _register_registry_routes(app, "indexes", control_state.indexes, IndexDeployment, admin_dep)
+
+    @app.post("/v1/control/indexes/{index_id}/validate")
+    def validate_index(index_id: str, body: dict, _: Principal = Depends(admin_dep)):
+        deployment = control_state.indexes.get(index_id)
+        evidence = RetrievalQualityEvidence(**body)
+        updated = promotion_controller.validate_candidate(deployment, evidence)
+        return control_state.indexes.put(updated).model_dump(mode="json")
+
+    @app.post("/v1/control/indexes/{index_id}/canary")
+    def canary_index(index_id: str, body: dict, _: Principal = Depends(admin_dep)):
+        deployment = control_state.indexes.get(index_id)
+        updated = promotion_controller.set_canary(deployment, int(body.get("percent", -1)))
+        return control_state.indexes.put(updated).model_dump(mode="json")
+
+    @app.post("/v1/control/indexes/{index_id}/promote")
+    def promote_index(index_id: str, _: Principal = Depends(admin_dep)):
+        deployment = control_state.indexes.get(index_id)
+        updated = promotion_controller.promote(deployment)
+        return control_state.indexes.put(updated).model_dump(mode="json")
+
+    @app.post("/v1/control/indexes/{index_id}/rollback-canary")
+    def rollback_index(index_id: str, _: Principal = Depends(admin_dep)):
+        deployment = control_state.indexes.get(index_id)
+        updated = promotion_controller.rollback_canary(deployment)
+        return control_state.indexes.put(updated).model_dump(mode="json")
+
+    return app
+
+
+def _register_registry_routes(app: FastAPI, name: str, registry, model_cls, admin_dep):
+    list_path = f"/v1/control/{name}"
+    item_path = f"/v1/control/{name}/{{item_id}}"
+
+    def list_items(_: Principal = Depends(admin_dep)):
+        return {name: [x.model_dump(mode="json") for x in registry.list()]}
+
+    list_items.__name__ = f"list_{name}"
+    app.get(list_path)(list_items)
+
+    def put_item(item_id: str, body: dict, _: Principal = Depends(admin_dep)):
+        item = model_cls.model_validate({**body, "id": item_id})
+        return registry.put(item).model_dump(mode="json")
+
+    put_item.__name__ = f"put_{name}"
+    app.put(item_path)(put_item)
+
+    def delete_item(item_id: str, _: Principal = Depends(admin_dep)):
+        registry.delete(item_id)
+
+    delete_item.__name__ = f"delete_{name}"
+    app.delete(item_path, status_code=status.HTTP_204_NO_CONTENT)(delete_item)
+
+
+def _json_error(status_code: int, detail: str):
+    from fastapi.responses import JSONResponse
+
+    return JSONResponse(status_code=status_code, content={"detail": detail})
