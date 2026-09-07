@@ -1,0 +1,45 @@
+name: materialize-clean-source
+
+on:
+  push:
+    branches: [enterprise-data-platform-clean]
+    paths:
+      - ".github/workflows/materialize-clean-source.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  materialize:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: enterprise-data-platform-clean
+          fetch-depth: 0
+
+      - name: Reconstruct and verify complete source
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat artifacts/source_chunks/chunk*.b64 | base64 -d > /tmp/source.zip
+          echo "0d52f8cf93c845f231f50472dd4549a5391b8de26079426bb27edfdc370f16f1  /tmp/source.zip" | sha256sum -c -
+          unzip -t /tmp/source.zip
+          unzip -o /tmp/source.zip -d .
+          find enterprise_delivery -type d -name '__pycache__' -prune -exec rm -rf {} + || true
+          find enterprise_delivery -type d -name '.pytest_cache' -prune -exec rm -rf {} + || true
+          find enterprise_delivery -type f \( -name '*.pyc' -o -name '*.db' \) -delete || true
+          test -f enterprise_delivery/platform_v1/enterprise_data_platform/reference_app.py
+          test -f enterprise_delivery/platform_v1/frontend/EnterpriseControlHub.jsx
+          test -f enterprise_delivery/platform_v1/DEPLOYMENT.md
+
+      - name: Commit expanded source
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add enterprise_delivery
+          git rm -r artifacts/source_chunks
+          git commit -m "feat: materialize complete verified enterprise platform source"
+          git push origin HEAD:enterprise-data-platform-clean
