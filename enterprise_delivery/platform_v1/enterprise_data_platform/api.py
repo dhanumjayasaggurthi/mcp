@@ -24,6 +24,7 @@ from .policy import PolicyEngine
 from .query_validation import QueryValidationError
 from .services import AccessDenied, CapabilityUnavailable, PlatformService
 from .promotion import IndexPromotionController, RetrievalQualityEvidence, PromotionBlocked
+from .operations import InMemoryOperationsProvider, OperationsProvider
 
 PrincipalResolver = Callable[[Request], Principal]
 ControlAdminCheck = Callable[[Principal], bool]
@@ -38,6 +39,7 @@ def create_app(
     principal_resolver: PrincipalResolver,
     control_admin_check: ControlAdminCheck,
     promotion_controller: IndexPromotionController | None = None,
+    operations_provider: OperationsProvider | None = None,
 ) -> FastAPI:
     """Create the v1 API application.
 
@@ -48,6 +50,7 @@ def create_app(
 
     app = FastAPI(title="Enterprise Governed Data Retrieval API", version="1.0.0")
     promotion_controller = promotion_controller or IndexPromotionController()
+    operations_provider = operations_provider or InMemoryOperationsProvider()
 
     def principal_dep(request: Request) -> Principal:
         return principal_resolver(request)
@@ -186,6 +189,10 @@ def create_app(
             active_agents=sum(1 for a in agents if a.status == ManagedStatus.ACTIVE),
             control_plane_status="degraded" if degraded else "healthy",
         )
+
+    @app.get("/v1/control/dashboard")
+    def control_dashboard(_: Principal = Depends(admin_dep)):
+        return operations_provider.snapshot()
 
     @app.get("/v1/control/datasets")
     def control_datasets(_: Principal = Depends(admin_dep)):

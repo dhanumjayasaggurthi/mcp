@@ -18,6 +18,7 @@ from enterprise_data_platform.models import (
     SourceBinding,
 )
 from enterprise_data_platform.policy import PolicyEngine
+from enterprise_data_platform.operations import InMemoryOperationsProvider
 from enterprise_data_platform.services import PlatformService
 
 
@@ -89,6 +90,7 @@ def make_client() -> TestClient:
         control_state=control,
         principal_resolver=resolver,
         control_admin_check=lambda p: "data-platform-admin" in p.groups,
+        operations_provider=InMemoryOperationsProvider({"system_status": "operational", "metrics": {"p95_latency": {"value": 412}}}),
     )
     return TestClient(app)
 
@@ -180,6 +182,11 @@ def test_control_hub_requires_admin_and_manages_runtime_objects():
     assert data["indexes"] == 1
     assert data["healthy_indexes"] == 1
     assert data["control_plane_status"] == "healthy"
+
+    dashboard = client.get("/v1/control/dashboard", headers=headers)
+    assert dashboard.status_code == 200
+    assert dashboard.json()["metrics"]["p95_latency"]["value"] == 412
+    assert dashboard.json()["generated_at"].endswith("+00:00")
 
 
 def test_control_hub_zero_downtime_index_promotion_is_gated():
