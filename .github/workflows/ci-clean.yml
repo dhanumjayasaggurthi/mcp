@@ -1,0 +1,47 @@
+name: enterprise-platform-ci
+
+on:
+  push:
+    branches: [enterprise-data-platform-clean]
+    paths-ignore:
+      - ".github/workflows/materialize-clean-source.yml"
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  python:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install and test platform
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd enterprise_delivery/platform_v1
+          python -m pip install --upgrade pip
+          pip install -e '.[test,server]'
+          PYTHONPATH=. pytest -q tests
+          python -m compileall -q enterprise_data_platform
+          cd ..
+          PYTHONPATH=. pytest -q tests
+
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Build Control Hub
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd enterprise_delivery/platform_v1/frontend
+          npm install
+          npm run build
