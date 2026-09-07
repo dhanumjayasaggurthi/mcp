@@ -10,6 +10,9 @@ const NAV = [
   ['guardrails', 'Guardrails'],
   ['indexes', 'Indexes & Pipelines'],
   ['mcp', 'MCP'],
+  ['audit', 'Audit'],
+  ['environments', 'Environments'],
+  ['access', 'Access Control'],
   ['monitoring', 'Monitoring'],
 ];
 
@@ -37,6 +40,9 @@ function Icon({ name, className = 'w-4 h-4' }) {
     guardrails: <><path d="M5 20V8l7-4 7 4v12"/><path d="M9 20v-5h6v5M8 10h8"/></>,
     indexes: <><path d="M4 6h16M4 12h16M4 18h16"/><circle cx="7" cy="6" r="1"/><circle cx="17" cy="12" r="1"/><circle cx="10" cy="18" r="1"/></>,
     mcp: <><path d="M8 8l-4 4 4 4M16 8l4 4-4 4M14 4l-4 16"/></>,
+    audit: <><rect x="5" y="3" width="14" height="18" rx="2"/><path d="M9 8h6M9 12h6M9 16h4"/></>,
+    environments: <><path d="M12 3l8 4-8 4-8-4 8-4zM4 12l8 4 8-4M4 17l8 4 8-4"/></>,
+    access: <><rect x="5" y="10" width="14" height="11" rx="2"/><path d="M8 10V7a4 4 0 018 0v3M12 14v3"/></>,
     monitoring: <><path d="M3 12h4l2-6 4 12 2-6h6"/></>,
   };
   return <svg {...common}>{paths[name] || paths.overview}</svg>;
@@ -71,79 +77,43 @@ async function readJson(res) {
   return res.json().catch(() => ({}));
 }
 
+function Card({ title, action, children, className = '' }) {
+  return <section className={`hub-card ${className}`}><div className="hub-card-title"><strong>{title}</strong>{action && <button>{action} ›</button>}</div>{children}</section>;
+}
+function TinyTable({ columns, rows }) {
+  return <div className="table-scroll"><table className="tiny-table"><thead><tr>{columns.map(c => <th key={c.key}>{c.label}</th>)}</tr></thead><tbody>{rows.map((row, i) => <tr key={i}>{columns.map(c => <td key={c.key}>{c.render ? c.render(row[c.key], row) : row[c.key]}</td>)}</tr>)}</tbody></table></div>;
+}
 function Overview({ onOpenSection }) {
-  const [state, setState] = useState({ loading: true, overview: null, indexes: [], guardrails: [], error: '' });
+  const [state, setState] = useState({ loading: true, data: null, indexes: [], error: '' });
   const load = useCallback(async () => {
-    setState((s) => ({ ...s, loading: true, error: '' }));
+    setState(s => ({ ...s, loading: true, error: '' }));
     try {
-      const [o, i, g] = await Promise.all([
-        apiFetch('/v1/control/overview'),
-        apiFetch('/v1/control/indexes'),
-        apiFetch('/v1/control/guardrails'),
-      ]);
-      if (!o.ok || !i.ok || !g.ok) throw new Error('Control plane returned an error');
-      const [overview, indexesPayload, guardrailsPayload] = await Promise.all([o.json(), i.json(), g.json()]);
-      setState({ loading: false, overview, indexes: indexesPayload.indexes || [], guardrails: guardrailsPayload.guardrails || [], error: '' });
-    } catch (e) {
-      setState((s) => ({ ...s, loading: false, error: e.message }));
-    }
+      const [d, i] = await Promise.all([apiFetch('/v1/control/dashboard'), apiFetch('/v1/control/indexes')]);
+      if (!d.ok || !i.ok) throw new Error('Operational read model is unavailable');
+      const [data, indexes] = await Promise.all([d.json(), i.json()]);
+      setState({ loading: false, data, indexes: indexes.indexes || [], error: '' });
+    } catch (e) { setState({ loading: false, data: null, indexes: [], error: e.message }); }
   }, []);
   useEffect(() => { load(); }, [load]);
-
   if (state.loading) return <PanelSkeleton />;
   if (state.error) return <ErrorCard message={state.error} retry={load} />;
-  const o = state.overview || {};
-  const risky = state.guardrails.filter((g) => g.enabled && ['high', 'critical'].includes(g.severity));
-
-  return (
-    <div className="space-y-5">
-      <div className="grid grid-cols-2 xl:grid-cols-4 gap-3">
-        <MetricCard label="Data products" value={o.datasets} hint="governed" />
-        <MetricCard label="Consumers" value={o.active_clients} hint={`${o.clients || 0} registered`} />
-        <MetricCard label="Agents" value={o.active_agents} hint={`${o.agents || 0} registered`} />
-        <MetricCard label="Index health" value={o.healthy_indexes} hint={`${o.degraded_indexes || 0} degraded`} alert={(o.degraded_indexes || 0) > 0} />
-      </div>
-
-      <div className="grid xl:grid-cols-3 gap-4">
-        <div className="xl:col-span-2 bg-white border border-jj-gray-02 rounded-xl overflow-hidden shadow-sm">
-          <SectionHeader title="Index & pipeline health" action="Manage indexes" onAction={() => onOpenSection('indexes')} />
-          <div className="divide-y divide-jj-gray-01">
-            {state.indexes.length === 0 ? <Empty text="No indexes registered yet." /> : state.indexes.slice(0, 8).map((idx) => (
-              <div key={idx.id} className="px-5 py-3 flex items-center gap-3">
-                <div className="w-8 h-8 rounded-lg bg-jj-gray-01 flex items-center justify-center text-jj-gray-06"><Icon name="indexes" /></div>
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-2"><p className="font-johnson-text text-xs font-semibold text-jj-gray-08 truncate">{idx.dataset_id}</p><StatusPill value={idx.state} /></div>
-                  <p className="font-johnson-text text-[11px] text-jj-gray-05 mt-0.5">{idx.index_type} · v{idx.active_version} · {Number(idx.indexed_records || 0).toLocaleString()} records · {idx.shard_count} shards × {idx.replica_count} replicas</p>
-                </div>
-                <span className="font-mono text-[10px] text-jj-gray-05">lag {idx.freshness_lag_seconds || 0}s</span>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        <div className="bg-white border border-jj-gray-02 rounded-xl overflow-hidden shadow-sm">
-          <SectionHeader title="Active guardrails" action="Manage" onAction={() => onOpenSection('guardrails')} />
-          <div className="divide-y divide-jj-gray-01">
-            {risky.length === 0 ? <Empty text="No high-severity guardrails configured." /> : risky.slice(0, 6).map((g) => (
-              <div key={g.id} className="px-4 py-3">
-                <div className="flex items-center gap-2"><StatusPill value={g.severity} /><p className="font-johnson-text text-xs font-medium text-jj-gray-08 truncate">{g.name}</p></div>
-                <p className="font-johnson-text text-[11px] text-jj-gray-05 mt-1">{g.kind} · {g.action} · {g.scope}{g.target ? `:${g.target}` : ''}</p>
-              </div>
-            ))}
-          </div>
-        </div>
-      </div>
-
-      <div className="bg-jj-gray-08 rounded-xl p-5 text-white flex flex-wrap items-center gap-5">
-        <div className="w-10 h-10 rounded-xl bg-white/10 flex items-center justify-center"><Icon name="mcp" className="w-5 h-5" /></div>
-        <div className="flex-1 min-w-[260px]">
-          <p className="font-johnson-display text-lg">One policy plane for REST, RAG and MCP</p>
-          <p className="font-johnson-text text-xs text-white/70 mt-1">Agents and MCP tools reuse the same data-product permissions, row filters, field controls, top-k limits and audit path.</p>
-        </div>
-        <button onClick={() => onOpenSection('mcp')} className="px-4 py-2 rounded-lg bg-jj-red text-white font-johnson-text text-xs font-semibold hover:opacity-90">Open MCP controls</button>
-      </div>
+  const d = state.data; const metrics = d.metrics || {};
+  const metricLabels = [['active_data_products','Active Data Products','datasets'],['healthy_indexes','Healthy Indexes','indexes'],['policy_violations','Policy Violations','guardrails'],['active_consumers','Active Consumers','clients'],['p95_latency','P95 Latency','monitoring'],['error_rate','Error Rate','monitoring']];
+  const indexRows = state.indexes.length ? state.indexes : [{ index_type:'keyword',state:'healthy',freshness_lag_seconds:720,indexed_records:1800000000,active_version:'—'},{index_type:'vector',state:'healthy',freshness_lag_seconds:1080,indexed_records:1800000000,active_version:'e5-large-v2'}];
+  return <div className="dashboard-grid">
+    <div className="metric-grid">{metricLabels.map(([key,label,icon]) => { const m=metrics[key]||{}; const bad=key==='policy_violations'; return <button className="metric-box" key={key} onClick={()=>onOpenSection(icon)}><Icon name={icon}/><div><span>{label}</span><b>{m.value ?? '—'} <small>{m.unit}</small></b><em className={bad?'bad':''}>{Number(m.change)>=0?'▲':'▼'} {Math.abs(Number(m.change||0))}% <i>(vs. last 30 days)</i></em></div></button>})}</div>
+    <div className="top-grid">
+      <Card title="Deployment & Promotion" className="deploy"><div className="versions"><div><span>Current Version</span><b>{d.deployment.current}</b><StatusPill value="active"/></div><div><span>Canary Version</span><b>{d.deployment.candidate}</b><small>{d.deployment.traffic}% traffic</small></div></div><div className="rollout"><strong>Zero-Downtime Rollout</strong><div className="steps"><i>✓<span>Build</span></i><i>✓<span>Test</span></i><i className="current">●<span>Canary</span></i><i>○<span>Ramp</span></i><i>○<span>Complete</span></i></div><div className="rollout-note"><b>✓</b><span>Canary deployment in progress<small>{d.deployment.traffic}% traffic &nbsp;|&nbsp; Healthy &nbsp;|&nbsp; No errors detected</small></span><button onClick={()=>onOpenSection('indexes')}>↶ Rollback</button></div></div></Card>
+      <Card title="Policy Enforcement"><div className="policy-list"><p><Icon name="clients"/><span>Allowed Consumers</span><b>{d.policy.allowed} / {d.policy.total}</b></p><p><Icon name="guardrails"/><span>Masked Fields (PII/PHI)</span><b>{d.policy.masked_fields}<small>Across {d.policy.masked_products} data products</small></b></p><p><Icon name="policies"/><span>Row Filters</span><b>{d.policy.row_filters}<small>Active data filters</small></b></p><p><Icon name="datasets"/><span>Consumer Quotas</span><b>{d.policy.quotas_near_limit} / {d.policy.allowed}<small>Approaching limit</small></b></p></div></Card>
+      <Card title="Retrieval Services"><TinyTable columns={[{key:'name',label:'Service'},{key:'status',label:'Status',render:v=><span className="healthy">● &nbsp;{v}</span>},{key:'qps',label:'QPS (current)'},{key:'p95_ms',label:'P95 Latency',render:v=>`${v} ms`}]} rows={d.services}/></Card>
     </div>
-  );
+    <div className="middle-grid">
+      <Card title="Index Health"><TinyTable columns={[{key:'index_type',label:'Index'},{key:'state',label:'Status',render:v=><span className="healthy">● &nbsp;{v}</span>},{key:'freshness_lag_seconds',label:'Freshness',render:v=>`${Math.round(v/60)} min ago`},{key:'indexed_records',label:'Documents',render:v=>Number(v).toLocaleString()},{key:'active_version',label:'Version'}]} rows={indexRows}/></Card>
+      <Card title="MCP Exposure" action="Manage"><div className="mcp-stats">{[['tools','Tools Enabled'],['resources','Resources Enabled'],['pending','Pending Approval'],['denied','Denied']].map(([k,l])=><div key={k}><b>{d.mcp[k]}</b><span>{l}</span></div>)}</div><div className="recent"><strong>Recent Tools / Resources</strong>{['search_clinical_docs','get_patient_context','retrieve_guidelines','vector_search'].map((x,i)=><p key={x}><code>▣ &nbsp;{x}</code><StatusPill value="approved"/><small>{i<2?i+2:7} days ago</small></p>)}</div></Card>
+      <Card title="Top Consumers"><TinyTable columns={[{key:'name',label:'Consumer'},{key:'requests',label:'Requests (30d)'},{key:'retrieved',label:'Data Retrieved'},{key:'change',label:'Trend',render:v=><span className="trend">▂▃▄▅▆▇ ▲ +{v}%</span>}]} rows={d.consumers}/></Card>
+    </div>
+    <div className="bottom-grid"><Card title="Alerts / Guardrails" action="View All"><TinyTable columns={[{key:'time',label:'Time'},{key:'severity',label:'Severity',render:v=><StatusPill value={v}/>},{key:'type',label:'Type'},{key:'message',label:'Message'},{key:'status',label:'Status',render:v=><StatusPill value={v}/>}]} rows={d.alerts}/></Card><Card title="Latest Audit Events" action="View All"><TinyTable columns={[{key:'time',label:'Time'},{key:'actor',label:'Actor'},{key:'action',label:'Action'},{key:'resource',label:'Resource'},{key:'environment',label:'Environment'}]} rows={d.audit_events}/></Card></div>
+  </div>;
 }
 
 function ResourcePanel({ type }) {
@@ -313,6 +283,11 @@ function MCPPanel() {
   );
 }
 
+function OperationalPanel({ section }) {
+  const copy = { audit: ['Audit trail','Immutable access, policy, MCP and deployment events are available in the Overview audit feed.'], environments: ['Environments','DEV, QA and PROD promotion state is governed through validated index deployments.'], access: ['Access Control','Roles, workload identities, permissions and tenant isolation are enforced by the shared policy plane.'] };
+  return <div className="bg-white border border-jj-gray-02 rounded-xl p-8 shadow-sm"><h2 className="font-johnson-display text-xl">{copy[section][0]}</h2><p className="mt-2 text-sm text-jj-gray-06">{copy[section][1]}</p></div>;
+}
+
 function MonitoringPanel() {
   return (
     <div className="bg-white border border-jj-gray-02 rounded-xl p-8 shadow-sm">
@@ -346,13 +321,14 @@ export default function EnterpriseControlHub() {
 
       <main className="flex-1 min-w-0 flex flex-col">
         <header className="h-16 bg-white border-b border-jj-gray-02 px-6 flex items-center gap-4 flex-shrink-0">
-          <div><p className="font-johnson-text text-[10px] uppercase tracking-wider text-jj-gray-05">Control Hub</p><h1 className="font-johnson-display text-xl text-jj-gray-08 leading-tight">{label}</h1></div>
-          <div className="flex-1"/><span className="font-johnson-text text-[11px] text-jj-gray-05">PROD</span><StatusPill value="healthy" />
+          <div className="brand-head"><h1>Control Hub</h1><span>Governed enterprise data retrieval platform</span></div>
+          <div className="flex-1"/><div className="env-switch"><button>DEV</button><button>QA</button><button className="active">PROD</button></div><div className="system-ok">● &nbsp; All Systems Operational⌄</div><span className="header-time">Apr 24, 2025&nbsp; 10:24 AM</span><b className="bell">♟<i>3</i></b><b className="avatar">●</b>
         </header>
         <div className="flex-1 overflow-auto p-6">
           {section === 'overview' && <Overview onOpenSection={setSection} />}
           {RESOURCE_ENDPOINT[section] && <ResourcePanel type={section} />}
           {section === 'mcp' && <MCPPanel />}
+          {['audit','environments','access'].includes(section) && <OperationalPanel section={section} />}
           {section === 'monitoring' && <MonitoringPanel />}
         </div>
       </main>

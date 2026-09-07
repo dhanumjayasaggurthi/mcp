@@ -18,10 +18,20 @@ This package is the implementation foundation for the target RDH/RegAssist archi
 - Runtime guardrail engine.
 - MCP facade that calls the same governed service layer and checks registered agent identity/scope.
 - J&J-style Control Hub frontend foundation in `frontend/EnterpriseControlHub.jsx`.
+- Bounded operational dashboard read model for service health, latency, error,
+  policy, deployment, consumer, MCP, alert and audit aggregates.
 
 ## Important deployment boundary
 
 The included in-memory stores/search adapters are test/reference adapters only. Production must bind the interfaces to the organization's HA control database, enterprise identity system, source warehouses, keyword engine, vector database, CDC/queue stack, object storage/export workers and observability platform.
+
+The displayed dashboard values are reference data supplied by
+`InMemoryOperationsProvider`. Production must inject an `OperationsProvider`
+backed by pre-aggregated telemetry and immutable audit storage. Dashboard reads
+never scan source records or vector collections. Large displayed counts are not
+evidence of a completed billion-record load test; run the performance,
+resilience and accuracy gates against the selected enterprise backends before
+promotion.
 
 ## Non-negotiable scale rules represented in code
 
@@ -41,5 +51,11 @@ cd platform_v1
 PYTHONPATH=.:tests pytest -q tests
 python -m compileall -q enterprise_data_platform
 cd frontend
-tsc --allowJs --checkJs false --jsx react --noEmit --skipLibCheck EnterpriseControlHub.jsx
+npm install
+npm run check
+npm run build
 ```
+
+Use the pinned dependency versions in `frontend/package.json`; do not replace
+them with floating `latest` ranges. Generate and commit the lockfile from an
+approved registry before switching CI and release builds to `npm ci`.
