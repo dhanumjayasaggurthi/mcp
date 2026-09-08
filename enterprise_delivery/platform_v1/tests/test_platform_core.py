@@ -152,7 +152,10 @@ def build_service():
 
 
 def test_cursor_pagination_is_keyset_stable_and_tenant_isolated():
-    service, _, _ = build_service()
+    service, catalog, policies = build_service()
+    p = catalog.get("regulatory-docs")
+    catalog.put(p.model_copy(update={"capabilities": p.capabilities | {Capability.EXACT_COUNT}}))
+    policies.put(allow_policy().model_copy(update={"id": "count-grant", "operations": {Capability.EXACT_COUNT}}))
     req = StructuredQueryRequest(
         select=["id", "title", "secret", "tenant_id"],
         order_by=[SortField(field="title", direction="asc")],
@@ -247,3 +250,4 @@ def test_rrf_deduplicates_and_combines_routes():
     assert fused[0].record_id == "2"
     assert len({(h.record_id, h.chunk_id) for h in fused}) == len(fused)
     assert fused[0].scores["hybrid"] > fused[1].scores["hybrid"]
+

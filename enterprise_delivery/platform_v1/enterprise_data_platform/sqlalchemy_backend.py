@@ -3,7 +3,10 @@ from __future__ import annotations
 import threading
 from typing import Any, Callable, Dict, Mapping, Optional, Sequence, Tuple
 
-from sqlalchemy import MetaData, Table, and_, func, or_, select
+from sqlalchemy import MetaData, Table, and_, case, func, or_, select, text
+from .cache import BoundedCache, CacheClass, CacheKey
+from .context import current_context
+from .durable import fingerprint
 from sqlalchemy.engine import Engine
 
 from .backends import StructuredBackend, StructuredPage
@@ -21,15 +24,18 @@ class SQLAlchemyStructuredBackend(StructuredBackend):
     every request.
     """
 
-    def __init__(self, engine_provider: EngineProvider) -> None:
+    def __init__(self, engine_provider: EngineProvider, *, timeout_seconds=30, native_nulls_last=True,
+                 max_scan_rows=None, allow_unknown_cost=False) -> None:
         self._engine_provider = engine_provider
-        self._tables: Dict[Tuple[str, str], Table] = {}
+        self._tables = BoundedCache(max_entries=256, ttl_seconds=300)
+        self.timeout_seconds = timeout_seconds
+        self.native_nulls_last = native_nulls_last
+        self.max_scan_rows, self.allow_unknown_cost = max_scan_rows, allow_unknown_cost
         self._lock = threading.RLock()
 
     def invalidate(self, dataset_id: str) -> None:
         with self._lock:
-            for key in [k for k in self._tables if k[0] == dataset_id]:
-                self._tables.pop(key, None)
+            self._tables.invalidate(lambda key: key.key.startswith(dataset_id + ":"))
 
     def query(
         self,
@@ -44,27 +50,62 @@ class SQLAlchemyStructuredBackend(StructuredBackend):
     ) -> StructuredPage:
         engine = self._engine_provider(product)
         table = self._table(product, engine)
-        columns = [table.c[name] for name in fields]
+        if not 1 <= limit <= 10000:
+            raise ValueError("query limit must be 1..10000")
+        internal_fields = list(dict.fromkeys([*fields, *[s.field for s in order_by]]))
+        columns = [table.c[name] for name in internal_fields]
         stmt = select(*columns).select_from(table)
 
         if filter_expr:
             stmt = stmt.where(self._compile_filter(table, filter_expr))
         if position:
             stmt = stmt.where(self._keyset_after(table, order_by, position))
-        stmt = stmt.order_by(*[self._order_clause(table.c[item.field], item.direction) for item in order_by]).limit(limit + 1)
+        ordering = []
+        for item in order_by:
+            column = table.c[item.field]
+            if self.native_nulls_last:
+                ordering.append(self._order_clause(column, item.direction))
+            else:
+                ordering.extend([case((column.is_(None), 1), else_=0).asc(), column.asc() if item.direction == "asc" else column.desc()])
+        stmt = stmt.order_by(*ordering).limit(limit + 1)
 
-        with engine.connect() as conn:
-            rows = [dict(r._mapping) for r in conn.execute(stmt).fetchall()]
+        context = current_context.get()
+        seconds = min(self.timeout_seconds, context.remaining() if context else self.timeout_seconds)
+        with engine.connect() as conn, conn.begin():
+            if engine.dialect.name == 'postgresql':
+                conn.execute(text('SET TRANSACTION READ ONLY'))
+                conn.execute(text("SELECT set_config('statement_timeout', :value, true)"), {'value': str(max(1, int(seconds * 1000)))})
+            elif engine.dialect.name == 'mysql':
+                conn.execute(text('SET SESSION MAX_EXECUTION_TIME=:value'), {'value': max(1, int(seconds * 1000))})
+            elif engine.dialect.name == 'mariadb':
+                conn.execute(text('SET SESSION max_statement_time=:value'), {'value': seconds})
+            if context:
+                context.remaining()
+            count_stmt = select(func.count()).select_from(table)
+            estimate_stmt = select(*columns).select_from(table)
+            if filter_expr:
+                predicate = self._compile_filter(table, filter_expr)
+                count_stmt = count_stmt.where(predicate)
+                estimate_stmt = estimate_stmt.where(predicate)
+            # Cost inspection runs only after the caller's policy filters have
+            # been combined. EXPLAIN never executes the underlying query.
+            self._check_scan(conn, stmt)
+            if count_mode == CountMode.EXACT:
+                self._check_scan(conn, count_stmt)
+            result = conn.execution_options(yield_per=min(1000, limit + 1)).execute(stmt)
+            try:
+                rows = [dict(r._mapping) for r in result.fetchmany(limit + 1)]
+            finally:
+                result.close()
+            if context:
+                context.remaining()
             count = None
             estimate = False
             if count_mode == CountMode.EXACT:
-                count_stmt = select(func.count()).select_from(table)
-                if filter_expr:
-                    count_stmt = count_stmt.where(self._compile_filter(table, filter_expr))
                 count = int(conn.execute(count_stmt).scalar_one())
             elif count_mode == CountMode.ESTIMATE:
-                # Generic SQL has no portable low-cost estimate. Dialect-specific
-                # adapters may override this method to use source statistics.
+                stats = self.inspect_plan(conn, estimate_stmt)
+                count = stats['estimated_rows'] if stats else None
                 estimate = True
 
         has_more = len(rows) > limit
@@ -72,40 +113,92 @@ class SQLAlchemyStructuredBackend(StructuredBackend):
         next_position = None
         if has_more and page_rows:
             last = page_rows[-1]
-            # Ordering fields might not have been selected by the client. Fetch
-            # them in the SQL projection internally to build the cursor safely.
-            missing_order_fields = [item.field for item in order_by if item.field not in last]
-            if missing_order_fields:
-                # Re-run only the final row by its unique identity fields. This
-                # should be rare; service integrations should include hidden order
-                # fields in backend projections for one-pass execution.
-                identity_filter = and_(*[table.c[f] == last[f] for f in product.identity_fields if f in last])
-                if len(product.identity_fields) != len([f for f in product.identity_fields if f in last]):
-                    raise ValueError("identity fields must be projected internally for cursor pagination")
-                extra_stmt = select(*[table.c[item.field] for item in order_by]).where(identity_filter).limit(1)
-                with engine.connect() as conn:
-                    order_row = conn.execute(extra_stmt).mappings().first()
-                if order_row is None:
-                    raise RuntimeError("could not resolve continuation position")
-                next_position = {item.field: order_row[item.field] for item in order_by}
-            else:
-                next_position = {item.field: last[item.field] for item in order_by}
+            next_position = {item.field: last[item.field] for item in order_by}
         return StructuredPage(rows=page_rows, next_position=next_position, count=count, count_is_estimate=estimate)
 
+    @staticmethod
+    def inspect_plan(conn, statement):
+        """Sanitized PostgreSQL estimates; never expose physical plan text."""
+        if conn.dialect.name != 'postgresql':
+            return None
+        compiled = statement.compile(dialect=conn.dialect, compile_kwargs={'render_postcompile': True})
+        # The statement is built exclusively with SQLAlchemy expressions. User
+        # literals stay bound parameters even in the EXPLAIN prefix.
+        value = conn.exec_driver_sql('EXPLAIN (FORMAT JSON) ' + str(compiled), compiled.params,
+            execution_options={'stream_results': False, 'yield_per': None}).scalar_one()
+        root = value[0]['Plan']
+        scans = []
+        def visit(node):
+            if 'Scan' in node.get('Node Type', ''):
+                # Rows removed by filters are not in Plan Rows. Sequential
+                # scans therefore use table cardinality from pg_class below.
+                estimate = int(node.get('Plan Rows', 0))
+                if node.get('Node Type') in {'Seq Scan', 'Parallel Seq Scan'} and node.get('Relation Name'):
+                    rows = conn.execute(text('SELECT MAX(reltuples) FROM pg_class WHERE relname=:name'),
+                        {'name': node['Relation Name']}).scalar()
+                    estimate = max(estimate, int(rows or 0))
+                scans.append(estimate)
+            for child in node.get('Plans', []):
+                visit(child)
+        visit(root)
+        return {'estimated_rows': max(0, int(root.get('Plan Rows', 0))),
+            'estimated_scan_rows': sum(scans), 'estimated_cost': float(root.get('Total Cost', 0))}
+
+    def _check_scan(self, conn, statement):
+        if self.max_scan_rows is None:
+            return
+        stats = self.inspect_plan(conn, statement)
+        if stats is None:
+            if not self.allow_unknown_cost:
+                raise ValueError('source has no cost inspector; administrator must configure a native scan governor')
+        elif stats['estimated_scan_rows'] > self.max_scan_rows:
+            raise ValueError('estimated scan exceeds source budget; narrow the query or use an approved export source')
+
+    def aggregate(self, *, product, request, filter_expr, limit):
+        engine = self._engine_provider(product)
+        table = self._table(product, engine)
+        groups = [table.c[name] for name in request.group_by]
+        functions = {'count': func.count, 'sum': func.sum, 'avg': func.avg, 'min': func.min, 'max': func.max}
+        measures = [(functions[m.function](table.c[m.field]) if m.field else func.count()).label(m.name)
+            for m in request.measures]
+        stmt = select(*groups, *measures).select_from(table)
+        if filter_expr:
+            stmt = stmt.where(self._compile_filter(table, filter_expr))
+        if groups:
+            stmt = stmt.group_by(*groups).order_by(*groups)
+        stmt = stmt.limit(limit + 1)
+        context = current_context.get()
+        seconds = min(self.timeout_seconds, context.remaining() if context else self.timeout_seconds)
+        with engine.connect() as conn, conn.begin():
+            if conn.dialect.name == 'postgresql':
+                conn.execute(text('SET TRANSACTION READ ONLY'))
+                conn.execute(text("SELECT set_config('statement_timeout', :value, true)"), {'value': str(max(1, int(seconds * 1000)))})
+            elif conn.dialect.name == 'mysql':
+                conn.execute(text('SET SESSION MAX_EXECUTION_TIME=:value'), {'value': max(1, int(seconds * 1000))})
+            elif conn.dialect.name == 'mariadb':
+                conn.execute(text('SET SESSION max_statement_time=:value'), {'value': seconds})
+            self._check_scan(conn, stmt)
+            result = conn.execution_options(yield_per=min(limit + 1, 1000)).execute(stmt)
+            try:
+                rows = [dict(r._mapping) for r in result.fetchmany(limit + 1)]
+            finally:
+                result.close()
+        if context:
+            context.remaining()
+        return rows
+
     def _table(self, product: DataProduct, engine: Engine) -> Table:
-        key = (product.id, product.version)
+        key = CacheKey(CacheClass.SCHEMA, 'control', 'schema', product.version,
+            product.id + ':' + fingerprint(product.source.model_dump()) + ':' + str(id(engine)))
+        existing = self._tables.get(key)
+        if existing is not None:
+            return existing
         with self._lock:
             existing = self._tables.get(key)
             if existing is not None:
                 return existing
-            metadata = MetaData()
-            table = Table(
-                product.source.object_name,
-                metadata,
-                schema=product.source.schema_name,
-                autoload_with=engine,
-            )
-            self._tables[key] = table
+            table = Table(product.source.object_name, MetaData(), schema=product.source.schema_name, autoload_with=engine)
+            self._tables.put(key, table, size_bytes=max(1024, len(table.columns) * 512))
             return table
 
     @staticmethod

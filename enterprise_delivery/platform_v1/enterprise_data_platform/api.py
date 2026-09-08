@@ -23,6 +23,7 @@ from .models import (
 from .policy import PolicyEngine
 from .query_validation import QueryValidationError
 from .services import AccessDenied, CapabilityUnavailable, PlatformService
+from .aggregation import AggregateRequest
 from .promotion import IndexPromotionController, RetrievalQualityEvidence, PromotionBlocked
 from .operations import InMemoryOperationsProvider, OperationsProvider
 
@@ -40,6 +41,7 @@ def create_app(
     control_admin_check: ControlAdminCheck,
     promotion_controller: IndexPromotionController | None = None,
     operations_provider: OperationsProvider | None = None,
+    readiness_check=None,
 ) -> FastAPI:
     """Create the v1 API application.
 
@@ -52,8 +54,18 @@ def create_app(
     promotion_controller = promotion_controller or IndexPromotionController()
     operations_provider = operations_provider or InMemoryOperationsProvider()
 
-    def principal_dep(request: Request) -> Principal:
-        return principal_resolver(request)
+    async def principal_dep(request: Request) -> Principal:
+        from starlette.concurrency import run_in_threadpool
+        from .context import current_actor
+        try:
+            principal = await run_in_threadpool(principal_resolver, request)
+        except HTTPException:
+            if hasattr(service, 'store'):
+                await run_in_threadpool(service.store.audit, 'authentication.deny', 'api')
+            raise
+        current_actor.set({'subject': principal.subject, 'client_id': principal.client_id,
+            'tenant': principal.tenant, 'agent_id': principal.agent_id, 'groups': sorted(principal.groups)})
+        return principal
 
     def admin_dep(principal: Principal = Depends(principal_dep)) -> Principal:
         if not control_admin_check(principal):
@@ -91,9 +103,58 @@ def create_app(
     async def promotion_blocked_handler(_: Request, exc: PromotionBlocked):
         return _json_error(status.HTTP_409_CONFLICT, str(exc))
 
+    from .guardrails import GuardrailViolation
+    from .governor import Overloaded
+    from .resilience import BackendUnavailable
+    from .jobs import LeaseLost
+    from sqlalchemy.exc import SQLAlchemyError
+    from .observability import RequestBoundary
+    app.add_middleware(RequestBoundary)
+    app.add_exception_handler(GuardrailViolation, access_denied_handler)
+
+    @app.exception_handler(Overloaded)
+    async def overload_handler(request, exc):
+        result = _json_error(429, str(exc))
+        result.headers['Retry-After'] = '1'
+        result.headers['RateLimit-Remaining'] = '0'
+        return result
+
+    async def unavailable_handler(request, exc):
+        return _json_error(503, 'a required backend is unavailable')
+    app.add_exception_handler(SQLAlchemyError, unavailable_handler)
+    app.add_exception_handler(BackendUnavailable, unavailable_handler)
+    app.add_exception_handler(LeaseLost, conflict_handler)
+
+    @app.exception_handler(TimeoutError)
+    async def timeout_handler(request, exc):
+        return _json_error(504, 'request deadline exceeded')
+
+    @app.get('/livez')
+    def live():
+        return {'status': 'alive'}
+
+    @app.get('/readyz')
+    def ready():
+        if readiness_check and not readiness_check():
+            return _json_error(503, 'control store is not ready')
+        return {'status': 'ready'}
+
+    def visible_decision(principal, product, capability):
+        from .models import PolicyDecision
+        try:
+            return service._decision(principal, product.id, capability)[1]
+        except AccessDenied:
+            return PolicyDecision(allowed=False, reason='not authorized')
+
     @app.get("/v1/health")
     def health():
+        if readiness_check and not readiness_check():
+            raise HTTPException(status_code=503, detail='control plane is not ready')
         return {"status": "healthy", "api_version": "v1"}
+
+    @app.post('/v1/datasets/{dataset_id}/aggregate', response_model=StructuredQueryResponse)
+    def aggregate(dataset_id: str, body: AggregateRequest, principal: Principal = Depends(principal_dep)):
+        return service.aggregate(principal, dataset_id, body)
 
     @app.get("/v1/datasets")
     def list_datasets(principal: Principal = Depends(principal_dep)):
@@ -103,7 +164,7 @@ def create_app(
             # if the principal has any matching allow policy for discover or one
             # of its enabled data capabilities.
             for capability in product.capabilities:
-                decision = policies.evaluate(principal=principal, product=product, operation=capability)
+                decision = visible_decision(principal, product, capability)
                 if decision.allowed:
                     visible.append(
                         {
@@ -123,7 +184,7 @@ def create_app(
         product = catalog.get(dataset_id)
         # Use QUERY as the discovery authorization fallback; if unavailable, any
         # enabled retrieval capability can authorize schema visibility.
-        decisions = [policies.evaluate(principal=principal, product=product, operation=c) for c in product.capabilities]
+        decisions = [visible_decision(principal, product, c) for c in product.capabilities]
         allowed = [d for d in decisions if d.allowed]
         if not allowed:
             raise AccessDenied("schema access denied")
@@ -131,7 +192,7 @@ def create_app(
         return {
             "dataset_id": product.id,
             "version": product.version,
-            "identity_fields": product.identity_fields,
+            "identity_fields": [f for f in product.identity_fields if f in fields],
             "fields": [f.model_dump() for f in product.fields if f.name in fields],
         }
 
@@ -140,7 +201,7 @@ def create_app(
         product = catalog.get(dataset_id)
         enabled = []
         for capability in product.capabilities:
-            decision = policies.evaluate(principal=principal, product=product, operation=capability)
+            decision = visible_decision(principal, product, capability)
             if decision.allowed:
                 enabled.append(capability.value)
         return {"dataset_id": dataset_id, "capabilities": sorted(enabled)}
@@ -214,12 +275,15 @@ def create_app(
     @app.put("/v1/control/policies/{policy_id}")
     def put_policy(policy_id: str, body: dict, _: Principal = Depends(admin_dep)):
         policy = AccessPolicy.model_validate({**body, "id": policy_id})
-        policies.put(policy)
-        return policy.model_dump(mode="json")
+        saved = policies.put(policy) or policy
+        return saved.model_dump(mode="json")
 
     @app.delete("/v1/control/policies/{policy_id}", status_code=status.HTTP_204_NO_CONTENT)
-    def delete_policy(policy_id: str, _: Principal = Depends(admin_dep)):
-        policies.delete(policy_id)
+    def delete_policy(policy_id: str, expected_revision: int | None = None, _: Principal = Depends(admin_dep)):
+        if hasattr(policies, 'registry'):
+            policies.delete(policy_id, expected_revision=expected_revision)
+        else:
+            policies.delete(policy_id)
 
     _register_registry_routes(app, "clients", control_state.clients, ClientRegistration, admin_dep)
     _register_registry_routes(app, "agents", control_state.agents, AgentRegistration, admin_dep)
@@ -228,6 +292,8 @@ def create_app(
 
     @app.post("/v1/control/indexes/{index_id}/validate")
     def validate_index(index_id: str, body: dict, _: Principal = Depends(admin_dep)):
+        if hasattr(promotion_controller, 'transition'):
+            return promotion_controller.transition(index_id, 'validate', body).model_dump(mode='json')
         deployment = control_state.indexes.get(index_id)
         evidence = RetrievalQualityEvidence(**body)
         updated = promotion_controller.validate_candidate(deployment, evidence)
@@ -235,22 +301,43 @@ def create_app(
 
     @app.post("/v1/control/indexes/{index_id}/canary")
     def canary_index(index_id: str, body: dict, _: Principal = Depends(admin_dep)):
+        if hasattr(promotion_controller, 'transition'):
+            return promotion_controller.transition(index_id, 'canary', body).model_dump(mode='json')
         deployment = control_state.indexes.get(index_id)
         updated = promotion_controller.set_canary(deployment, int(body.get("percent", -1)))
         return control_state.indexes.put(updated).model_dump(mode="json")
 
     @app.post("/v1/control/indexes/{index_id}/promote")
     def promote_index(index_id: str, _: Principal = Depends(admin_dep)):
+        if hasattr(promotion_controller, 'transition'):
+            return promotion_controller.transition(index_id, 'promote', {}).model_dump(mode='json')
         deployment = control_state.indexes.get(index_id)
         updated = promotion_controller.promote(deployment)
         return control_state.indexes.put(updated).model_dump(mode="json")
 
     @app.post("/v1/control/indexes/{index_id}/rollback-canary")
     def rollback_index(index_id: str, _: Principal = Depends(admin_dep)):
+        if hasattr(promotion_controller, 'transition'):
+            return promotion_controller.transition(index_id, 'rollback-canary', {}).model_dump(mode='json')
         deployment = control_state.indexes.get(index_id)
         updated = promotion_controller.rollback_canary(deployment)
         return control_state.indexes.put(updated).model_dump(mode="json")
 
+    if service.exporter and hasattr(service.exporter, 'get_for'):
+        @app.get('/v1/exports/{job_id}')
+        def export_status(job_id: str, principal: Principal = Depends(principal_dep)):
+            return service.exporter.get_for(principal, job_id)
+
+        @app.delete('/v1/exports/{job_id}')
+        def cancel_export(job_id: str, principal: Principal = Depends(principal_dep)):
+            return service.exporter.cancel_for(principal, job_id)
+
+        @app.get('/v1/exports/{job_id}/download')
+        def download_export(job_id: str, principal: Principal = Depends(principal_dep)):
+            return service.exporter.download(principal, job_id, service)
+
+    app.state.admin_dependency = admin_dep
+    app.state.principal_dependency = principal_dep
     return app
 
 
@@ -271,8 +358,11 @@ def _register_registry_routes(app: FastAPI, name: str, registry, model_cls, admi
     put_item.__name__ = f"put_{name}"
     app.put(item_path)(put_item)
 
-    def delete_item(item_id: str, _: Principal = Depends(admin_dep)):
-        registry.delete(item_id)
+    def delete_item(item_id: str, expected_revision: int | None = None, _: Principal = Depends(admin_dep)):
+        if hasattr(registry, 'store'):
+            registry.delete(item_id, expected_revision=expected_revision)
+        else:
+            registry.delete(item_id)
 
     delete_item.__name__ = f"delete_{name}"
     app.delete(item_path, status_code=status.HTTP_204_NO_CONTENT)(delete_item)
@@ -281,4 +371,5 @@ def _register_registry_routes(app: FastAPI, name: str, registry, model_cls, admi
 def _json_error(status_code: int, detail: str):
     from fastapi.responses import JSONResponse
 
-    return JSONResponse(status_code=status_code, content={"detail": detail})
+    from .context import trace_id
+    return JSONResponse(status_code=status_code, content={'detail': detail, 'code': str(status_code), 'trace_id': trace_id()})

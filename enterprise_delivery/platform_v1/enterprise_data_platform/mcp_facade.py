@@ -57,19 +57,35 @@ class MCPFacade:
         if not dataset_id or dataset_id not in agent.allowed_datasets:
             raise AccessDenied("dataset is not approved for this agent")
 
+        principal = principal.model_copy(update={'agent_id': agent_id})
+        if hasattr(self.service, 'governor'):
+            self.service.governor.consume('mcp:' + agent_id + ':' + str(principal.tenant), agent.max_tool_calls_per_minute, 60)
+
         if tool == "describe_dataset":
             product = self.catalog.get(dataset_id)
+            decisions = []
+            for capability in product.capabilities & agent.allowed_capabilities:
+                try:
+                    decisions.append(self.service._decision(principal, dataset_id, capability)[1])
+                except AccessDenied:
+                    continue
+            if not decisions:
+                raise AccessDenied('dataset description is not authorized')
+            fields = set().union(*(d.allowed_fields for d in decisions))
             return {
                 "id": product.id,
                 "display_name": product.display_name,
                 "version": product.version,
                 "capabilities": sorted(c.value for c in product.capabilities if c in agent.allowed_capabilities or c == Capability.DISCOVER),
-                "identity_fields": product.identity_fields,
+                "identity_fields": [f for f in product.identity_fields if f in fields],
             }
 
         if tool == "query_dataset":
             self._require_agent_capability(agent.allowed_capabilities, Capability.QUERY)
-            result = self.service.query(principal, dataset_id, StructuredQueryRequest.model_validate(arguments.get("request") or {}))
+            request = StructuredQueryRequest.model_validate(arguments.get('request') or {})
+            if request.count_mode.value == 'exact':
+                self._require_agent_capability(agent.allowed_capabilities, Capability.EXACT_COUNT)
+            result = self.service.query(principal, dataset_id, request)
             return result.model_dump(mode="json")
 
         if tool == "search_dataset":
@@ -113,3 +129,4 @@ class MCPFacade:
     def _require_agent_capability(capabilities, required: Capability) -> None:
         if required not in capabilities:
             raise AccessDenied(f"agent is not approved for capability '{required.value}'")
+

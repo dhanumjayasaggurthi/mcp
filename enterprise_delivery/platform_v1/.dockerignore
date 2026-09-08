@@ -1,0 +1,11 @@
+frontend
+tests
+benchmarks
+deploy
+docs
+*.db
+__pycache__
+.pytest_cache
+.hypothesis
+pytest-of-root
+*.egg-info

@@ -103,4 +103,4 @@ class GuardrailEngine:
             return bool(principal.client_id and rule.target == principal.client_id)
         # Agent-scoped guardrails are applied by the MCP/agent facade where an
         # agent registration ID exists. Standard REST identity has no agent ID.
-        return False
+        return bool(principal.agent_id and rule.target == principal.agent_id)

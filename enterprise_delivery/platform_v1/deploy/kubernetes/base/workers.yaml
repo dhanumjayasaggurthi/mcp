@@ -1,0 +1,193 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: edp-indexing
+spec:
+  replicas: 2
+  revisionHistoryLimit: 3
+  selector:
+    matchLabels:
+      app: edp
+      role: indexing
+  strategy:
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  template:
+    metadata:
+      labels:
+        app: edp
+        role: indexing
+    spec:
+      serviceAccountName: edp-runtime
+      terminationGracePeriodSeconds: 65
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      topologySpreadConstraints:
+      - maxSkew: 1
+        topologyKey: topology.kubernetes.io/zone
+        whenUnsatisfiable: DoNotSchedule
+        labelSelector:
+          matchLabels:
+            app: edp
+            role: indexing
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              topologyKey: kubernetes.io/hostname
+              labelSelector:
+                matchLabels:
+                  app: edp
+                  role: indexing
+      containers:
+      - name: indexing
+        image: edp-runtime:REPLACE_WITH_IMMUTABLE_TAG
+        imagePullPolicy: IfNotPresent
+        envFrom:
+        - configMapRef:
+            name: edp-config
+        resources:
+          requests:
+            cpu: 500m
+            memory: 512Mi
+            ephemeral-storage: 256Mi
+          limits:
+            cpu: '2'
+            memory: 2Gi
+            ephemeral-storage: 2Gi
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop:
+            - ALL
+        volumeMounts:
+        - name: secrets
+          mountPath: /run/secrets/edp
+          readOnly: true
+        - name: temporary
+          mountPath: /tmp
+        command:
+        - python
+        - -m
+        - enterprise_data_platform.workers
+        - indexing
+        readinessProbe:
+          exec:
+            command:
+            - python
+            - -c
+            - from pathlib import Path; assert Path('/tmp/edp-ready').exists()
+          periodSeconds: 10
+      volumes:
+      - name: secrets
+        secret:
+          secretName: edp-runtime-secrets
+          defaultMode: 288
+      - name: temporary
+        emptyDir:
+          sizeLimit: 1Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: edp-export
+spec:
+  replicas: 2
+  revisionHistoryLimit: 3
+  selector:
+    matchLabels:
+      app: edp
+      role: export
+  strategy:
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  template:
+    metadata:
+      labels:
+        app: edp
+        role: export
+    spec:
+      serviceAccountName: edp-runtime
+      terminationGracePeriodSeconds: 65
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      topologySpreadConstraints:
+      - maxSkew: 1
+        topologyKey: topology.kubernetes.io/zone
+        whenUnsatisfiable: DoNotSchedule
+        labelSelector:
+          matchLabels:
+            app: edp
+            role: export
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              topologyKey: kubernetes.io/hostname
+              labelSelector:
+                matchLabels:
+                  app: edp
+                  role: export
+      containers:
+      - name: export
+        image: edp-runtime:REPLACE_WITH_IMMUTABLE_TAG
+        imagePullPolicy: IfNotPresent
+        envFrom:
+        - configMapRef:
+            name: edp-config
+        resources:
+          requests:
+            cpu: 500m
+            memory: 512Mi
+            ephemeral-storage: 256Mi
+          limits:
+            cpu: '2'
+            memory: 2Gi
+            ephemeral-storage: 2Gi
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop:
+            - ALL
+        volumeMounts:
+        - name: secrets
+          mountPath: /run/secrets/edp
+          readOnly: true
+        - name: temporary
+          mountPath: /tmp
+        command:
+        - python
+        - -m
+        - enterprise_data_platform.workers
+        - export
+        readinessProbe:
+          exec:
+            command:
+            - python
+            - -c
+            - from pathlib import Path; assert Path('/tmp/edp-ready').exists()
+          periodSeconds: 10
+      volumes:
+      - name: secrets
+        secret:
+          secretName: edp-runtime-secrets
+          defaultMode: 288
+      - name: temporary
+        emptyDir:
+          sizeLimit: 1Gi

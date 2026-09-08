@@ -52,6 +52,9 @@ class EmbeddingProvider(ABC):
     def embed(self, text: str, *, profile_id: str, dimensions: int) -> List[float]:
         raise NotImplementedError
 
+    def embed_batch(self, texts: Sequence[str], *, profile_id: str, dimensions: int) -> List[List[float]]:
+        raise NotImplementedError("production embedding providers must implement batching")
+
 
 class VectorBackend(ABC):
     @abstractmethod
@@ -79,42 +82,40 @@ class ExportBackend(ABC):
 
 
 def eval_filter(row: Mapping[str, Any], expr: Optional[Dict[str, Any]]) -> bool:
+    return _filter_value(row, expr) is True
+
+
+def _filter_value(row, expr):
+    """SQL three-valued boolean semantics; only TRUE authorizes a row."""
     if not expr:
         return True
-    if "and" in expr:
-        return all(eval_filter(row, child) for child in expr["and"])
-    if "or" in expr:
-        return any(eval_filter(row, child) for child in expr["or"])
-    if "not" in expr:
-        return not eval_filter(row, expr["not"])
-    field = expr["field"]
-    op = expr["op"]
-    value = expr.get("value")
-    actual = row.get(field)
-    if op == "eq":
-        return actual == value
-    if op == "neq":
-        return actual != value
-    if op == "gt":
-        return actual is not None and actual > value
-    if op == "gte":
-        return actual is not None and actual >= value
-    if op == "lt":
-        return actual is not None and actual < value
-    if op == "lte":
-        return actual is not None and actual <= value
-    if op == "in":
-        return actual in value
-    if op == "between":
-        return actual is not None and value[0] <= actual <= value[1]
-    if op == "contains":
-        return actual is not None and str(value).lower() in str(actual).lower()
-    if op == "starts_with":
-        return actual is not None and str(actual).lower().startswith(str(value).lower())
-    if op == "exists":
-        exists = actual is not None
-        return exists if value is None else exists == bool(value)
-    raise ValueError(f"unsupported filter op: {op}")
+    if 'and' in expr or 'or' in expr:
+        key = 'and' if 'and' in expr else 'or'
+        values = [_filter_value(row, child) for child in expr[key]]
+        if key == 'and':
+            return False if False in values else (None if None in values else True)
+        return True if True in values else (None if None in values else False)
+    if 'not' in expr:
+        value = _filter_value(row, expr['not'])
+        return None if value is None else not value
+    actual, op, value = row.get(expr['field']), expr['op'], expr.get('value')
+    if op == 'exists':
+        return (actual is not None) == (True if value is None else value)
+    if op in {'eq','neq'} and value is None:
+        return (actual is None) if op == 'eq' else (actual is not None)
+    if actual is None:
+        return None
+    if op == 'eq': return actual == value
+    if op == 'neq': return actual != value
+    if op == 'gt': return actual > value
+    if op == 'gte': return actual >= value
+    if op == 'lt': return actual < value
+    if op == 'lte': return actual <= value
+    if op == 'in': return True if actual in value else (None if None in value else False)
+    if op == 'between': return value[0] <= actual <= value[1]
+    if op == 'contains': return str(value).lower() in str(actual).lower()
+    if op == 'starts_with': return str(actual).lower().startswith(str(value).lower())
+    raise ValueError('unsupported filter operation')
 
 
 def _compare_scalar(a: Any, b: Any) -> int:
@@ -135,6 +136,8 @@ def compare_rows(a: Mapping[str, Any], b: Mapping[str, Any], order_by: Sequence[
     for item in order_by:
         cmp = _compare_scalar(a.get(item.field), b.get(item.field))
         if cmp:
+            if a.get(item.field) is None or b.get(item.field) is None:
+                return cmp  # NULLS LAST in both directions
             return cmp if item.direction == "asc" else -cmp
     return 0
 
@@ -218,6 +221,9 @@ class InMemoryKeywordBackend(KeywordBackend):
 
 class DeterministicHashEmbeddingProvider(EmbeddingProvider):
     """Test/reference embedder only; never use this as a semantic production model."""
+
+    def embed_batch(self, texts, *, profile_id, dimensions):
+        return [self.embed(t, profile_id=profile_id, dimensions=dimensions) for t in texts]
 
     def embed(self, text: str, *, profile_id: str, dimensions: int) -> List[float]:
         import hashlib

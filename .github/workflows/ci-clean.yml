@@ -6,7 +6,7 @@ on:
     paths-ignore:
       - ".github/workflows/materialize-clean-source.yml"
   pull_request:
-    branches: [main]
+    branches: [main, enterprise-data-platform-clean]
 
 permissions:
   contents: read
@@ -14,18 +14,36 @@ permissions:
 jobs:
   python:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: edp_test
+          POSTGRES_PASSWORD: isolated-ci-only
+          POSTGRES_DB: edp_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U edp_test"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      EDP_TEST_POSTGRES_DSN: postgresql+psycopg://edp_test:isolated-ci-only@127.0.0.1:5432/edp_test
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
       - name: Install and test platform
         shell: bash
         run: |
           set -euo pipefail
           cd enterprise_delivery/platform_v1
           python -m pip install --upgrade pip
-          pip install -e '.[test,server]'
+          pip install --require-hashes -r requirements.lock
+          npm ci --prefix frontend
+          export PATH="$PWD/frontend/node_modules/.bin:$PATH"
           PYTHONPATH=. pytest -q tests
           python -m compileall -q enterprise_data_platform
           cd ..
@@ -43,5 +61,24 @@ jobs:
         run: |
           set -euo pipefail
           cd enterprise_delivery/platform_v1/frontend
-          npm install
+          npm ci
           npm run build
+          npm run check
+
+
+  deployment:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Render base and canary manifests
+        run: |
+          kubectl kustomize enterprise_delivery/platform_v1/deploy/kubernetes/base > /tmp/edp-base.yaml
+          kubectl kustomize enterprise_delivery/platform_v1/deploy/kubernetes/canary > /tmp/edp-canary.yaml
+      - name: Build production image
+        run: docker build -t edp-ci enterprise_delivery/platform_v1
+      - name: Verify fail-closed startup
+        run: |
+          if docker run --rm edp-ci; then
+            echo "Production must reject missing configuration"
+            exit 1
+          fi

@@ -9,6 +9,8 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 class Capability(str, Enum):
     DISCOVER = "discover"
     QUERY = "query"
+    AGGREGATE = "aggregate"
+    EXACT_COUNT = "exact_count"
     KEYWORD = "keyword"
     VECTOR = "vector"
     HYBRID = "hybrid"
@@ -55,6 +57,7 @@ class SourceBinding(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     connector: str = Field(min_length=1, max_length=128)
+    source_id: Optional[str] = Field(default=None, max_length=128)
     environment: str = Field(min_length=1, max_length=64)
     database: Optional[str] = None
     schema_name: Optional[str] = None
@@ -100,6 +103,11 @@ class RetrievalProfile(BaseModel):
     hybrid_rrf_k: int = Field(default=60, ge=1, le=1000)
     hybrid_keyword_weight: float = Field(default=1.0, gt=0, le=10)
     hybrid_vector_weight: float = Field(default=1.0, gt=0, le=10)
+    rerank_profile: Optional[str] = None
+    deduplicate_content: bool = True
+    max_chunks_per_record: int = Field(default=3, ge=1, le=100)
+    diversity_lambda: float = Field(default=1, ge=0, le=1)
+    allow_keyword_fallback: bool = False
 
 
 class DataProduct(BaseModel):
@@ -161,6 +169,7 @@ class Principal(BaseModel):
     tenant: Optional[str] = Field(default=None, max_length=256)
     groups: Set[str] = Field(default_factory=set)
     attributes: Dict[str, str] = Field(default_factory=dict)
+    agent_id: Optional[str] = Field(default=None, max_length=128)
 
 
 class PolicyEffect(str, Enum):
@@ -187,6 +196,7 @@ class AccessPolicy(BaseModel):
     max_top_k: Optional[int] = Field(default=None, ge=1, le=1000)
     require_tenant_isolation: bool = False
     priority: int = Field(default=100, ge=0, le=10000)
+    revision: int = Field(default=0, ge=0)
 
 
 class PolicyDecision(BaseModel):
@@ -223,6 +233,8 @@ class StructuredQueryResponse(BaseModel):
     count: Optional[int] = None
     count_is_estimate: bool = False
     trace_id: str
+    has_more: bool = False
+    returned_rows: int = 0
 
 
 class SearchRequest(BaseModel):
