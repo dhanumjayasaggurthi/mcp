@@ -28,7 +28,7 @@ def test_mysql_mariadb_null_keysets_and_parameterized_aggregates():
     # CI service is isolated. Production factory additionally requires verified TLS.
     engine=create_engine(dsn,pool_size=2,max_overflow=0,pool_timeout=1)
     name='test_'+uuid.uuid4().hex
-    md=MetaData();table=Table(name,md,Column('id',Integer,primary_key=True),Column('tenant',String(64)),Column('value',Integer))
+    md=MetaData();table=Table(name,md,Column('id',Integer,primary_key=True,autoincrement=False),Column('tenant',String(64)),Column('value',Integer))
     md.create_all(engine)
     try:
         with engine.begin() as conn:
