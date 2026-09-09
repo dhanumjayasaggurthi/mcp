@@ -150,6 +150,25 @@ def test_search_incomplete_shards_are_rejected():
         transport.request('POST', '/index/_search', body={})
 
 
+def test_failed_export_upload_cleans_partial_objects_and_never_completes(store, tmp_path):
+    service,catalog,policies=build_service()
+    p=product();catalog.put(p.model_copy(update={'capabilities':p.capabilities|{Capability.EXPORT}}))
+    policies.put(allow_policy().model_copy(update={'id':'export','operations':{Capability.EXPORT}}))
+    objects=LocalObjects(tmp_path/'objects');queue=DurableQueue(store)
+    backend=DurableExportBackend(queue,objects);service.exporter=backend
+    job=service.export(principal(),p.id,ExportRequest(select=['id'],format='jsonl',compression=None))
+    original_put=objects.put_file
+    def fail_after_upload(key,path):
+        original_put(key,path)
+        raise ConnectionError('object storage interrupted after accepting bytes')
+    objects.put_file=fail_after_upload
+    worker=ExportWorker(queue=queue,service=service,object_storage=objects,limits=Limits())
+    with pytest.raises(ConnectionError):
+        worker.process(queue.claim('export'))
+    assert queue.get(job.id)['status']=='running'
+    assert not list(objects.root.rglob('*.jsonl'))
+
+
 def test_rest_ssrf_dns_rebinding_is_pinned_and_private_addresses_blocked(monkeypatch):
     monkeypatch.setattr('socket.getaddrinfo', lambda *a, **k: [(2, 1, 6, '', ('127.0.0.1', 443))])
     with pytest.raises(ValueError, match='prohibited'):

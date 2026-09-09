@@ -102,7 +102,7 @@ class PlatformService:
     @staticmethod
     def _text_allowed(product, decision):
         profile = product.retrieval.text if product.retrieval else None
-        return bool(profile and set(profile.source_fields) <= (decision.allowed_fields - decision.masked_fields))
+        return bool(profile and (set(profile.source_fields) | set(product.identity_fields)) <= (decision.allowed_fields - decision.masked_fields))
 
     def query(self, principal: Principal, dataset_id: str, request: StructuredQueryRequest) -> StructuredQueryResponse:
         return self._query_as(principal, dataset_id, request, Capability.QUERY)

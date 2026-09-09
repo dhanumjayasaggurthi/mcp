@@ -161,7 +161,7 @@ class OpenSearchSink:
         else:
             index_settings['index.knn'] = True
             properties['vector'] = {'type': 'knn_vector', 'dimension': product.retrieval.vector.dimensions,
-                'method': {'name': 'hnsw', 'engine': 'lucene', 'space_type': 'cosinesimil',
+                'method': {'name': 'hnsw', 'engine': 'lucene', 'space_type': {'cosine':'cosinesimil', 'dot':'innerproduct', 'l2':'l2'}[product.retrieval.vector.distance],
                     'parameters': {'ef_construction': settings.ef_construction, 'm': settings.m}}}
         return self.transport.request('PUT', '/' + index_name(product.id, version, self.kind),
             body={'settings': index_settings, 'mappings': {'dynamic': 'strict', 'properties': properties}}, idempotent=False)

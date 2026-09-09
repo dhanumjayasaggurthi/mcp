@@ -2,7 +2,7 @@
 import asyncio
 import re
 import time
-from .context import ExecutionContext, current_context
+from .context import ExecutionContext, current_actor, current_context
 
 
 class Metrics:
@@ -53,6 +53,7 @@ class RequestBoundary:
         context.deadline = time.monotonic() + seconds
         context.idempotency_key = headers.get(b'idempotency-key', b'').decode('ascii', 'ignore') or None
         token = current_context.set(context)
+        actor_token = current_actor.set(None)
         started, received = False, 0
         async def receive_bounded():
             nonlocal received
@@ -79,6 +80,7 @@ class RequestBoundary:
                 await JSONResponse({'detail': 'request deadline exceeded', 'code': 'deadline_exceeded',
                     'trace_id': context.trace_id}, 504)(scope, receive, send_traced)
         finally:
+            current_actor.reset(actor_token)
             current_context.reset(token)
 
 
@@ -90,8 +92,11 @@ class SafeTelemetry:
         if scope['type'] != 'http':
             return await self.app(scope, receive, send)
         from opentelemetry import trace
+        from opentelemetry.trace.propagation.tracecontext import TraceContextTextMapPropagator
         tracer = trace.get_tracer('enterprise_data_platform')
-        with tracer.start_as_current_span('http.request', record_exception=False, set_status_on_exception=False) as span:
+        carrier = {k.decode('ascii'): v.decode('ascii', 'ignore')[:256] for k,v in scope['headers'] if k == b'traceparent'}
+        parent = TraceContextTextMapPropagator().extract(carrier)
+        with tracer.start_as_current_span('http.request', context=parent, record_exception=False, set_status_on_exception=False) as span:
             span.set_attribute('http.request.method', scope['method'])
             async def send_safe(message):
                 if message['type'] == 'http.response.start':
@@ -100,7 +105,14 @@ class SafeTelemetry:
                     if route and hasattr(route, 'path'):
                         span.set_attribute('http.route', route.path)
                 await send(message)
-            await self.app(scope, receive, send_safe)
+            started = time.monotonic()
+            try:
+                await self.app(scope, receive, send_safe)
+            finally:
+                import json
+                span_context = span.get_span_context()
+                print(json.dumps({'event': 'http.complete', 'trace_id': format(span_context.trace_id, '032x'),
+                    'duration_seconds': round(time.monotonic()-started, 6), 'method': scope['method']}), flush=True)
 
 
 class TelemetryProxy:

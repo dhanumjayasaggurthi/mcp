@@ -14,6 +14,7 @@ test = ["pytest>=8", "httpx>=0.27", "pytz>=2024.1", "hypothesis>=6", "pyyaml>=6"
 server = ["uvicorn>=0.30"]
 production = [
   "psycopg[binary]>=3.2,<4", "pyjwt[crypto]>=2.10,<3", "cryptography>=44",
+  "pymysql>=1.1,<2",
   "httpx>=0.27,<1", "pyarrow>=20", "boto3>=1.35,<2", "sqlglot>=30,<31",
   "opentelemetry-api>=1.44,<2", "opentelemetry-sdk>=1.44,<2",
   "opentelemetry-exporter-otlp-proto-http>=1.44,<2",

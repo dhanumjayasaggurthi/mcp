@@ -103,3 +103,32 @@ def test_postgres_governed_queries_estimates_and_scan_rejection(pg_store):
     with pytest.raises(ValueError,match='scan exceeds'):
         backend.query(product=service.catalog.get('facts'),fields=['id'],filter_expr=None,
             order_by=[SortField(field='id')],limit=1,position=None,count_mode=CountMode.NONE)
+
+
+def test_production_factory_sql_only_and_dashboard_contract(pg_store, tmp_path, monkeypatch):
+    from fastapi.testclient import TestClient
+    from enterprise_data_platform import production_app
+    from enterprise_data_platform.connectors import ConnectorCapabilities, SQLConnector
+    service,actor=runtime_service(pg_store)
+    (tmp_path/'cursor').write_text('c'*32)
+    monkeypatch.setenv('EDP_SECRET_DIR',str(tmp_path))
+    monkeypatch.setenv('EDP_CURSOR_SECRET_REF','file://cursor')
+    for name in ['EDP_SEARCH_URL','EDP_EMBEDDING_URL','EDP_RERANK_URL','EDP_EXPORT_BUCKET','OTEL_EXPORTER_OTLP_ENDPOINT']:
+        monkeypatch.delenv(name,raising=False)
+    for name in ['EDP_OIDC_ISSUER','EDP_OIDC_AUDIENCE','EDP_OIDC_JWKS_URL']:
+        monkeypatch.setenv(name,'https://identity.example')
+    # TLS and JWT cryptography have separate contracts; this test exercises
+    # production composition against the real CI control database.
+    monkeypatch.setattr(production_app,'control_engine',lambda _:pg_store.engine)
+    actor=actor.model_copy(update={'groups':{'data-platform-admin'},'attributes':{'oauth_scope':'edp:query edp:admin'}})
+    monkeypatch.setattr(production_app,'JWTPrincipalResolver',lambda **_: lambda request:actor)
+    app=production_app.create_production_app()
+    app.state.runtime.router.factories['test']=lambda r,s:SQLConnector(pg_store.engine,ConnectorCapabilities())
+    with TestClient(app) as client:
+        assert client.get('/readyz').status_code==200
+        assert client.post('/v1/datasets/facts/query',json={'limit':1}).json()['returned_rows']==1
+        data=client.get('/v1/control/dashboard').json()
+        assert data['reference_mode'] is False
+        assert data['metrics']['active_data_products']['value']==1
+        assert data['services']==[] and data['consumers']==[]
+        assert data['audit_events']

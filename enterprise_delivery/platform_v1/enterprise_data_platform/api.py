@@ -65,10 +65,14 @@ def create_app(
             raise
         current_actor.set({'subject': principal.subject, 'client_id': principal.client_id,
             'tenant': principal.tenant, 'agent_id': principal.agent_id, 'groups': sorted(principal.groups)})
+        if hasattr(service, 'store'):
+            await run_in_threadpool(service.store.audit, 'authentication.allow', 'api')
         return principal
 
     def admin_dep(principal: Principal = Depends(principal_dep)) -> Principal:
         if not control_admin_check(principal):
+            if hasattr(service, 'store'):
+                service.store.audit('administration.deny', 'control')
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="control hub administrator permission required")
         return principal
 
@@ -271,6 +275,10 @@ def create_app(
     @app.get("/v1/control/policies")
     def list_policies(_: Principal = Depends(admin_dep)):
         return {"policies": [p.model_dump(mode="json") for p in policies.list()]}
+
+    @app.delete('/v1/control/datasets/{dataset_id}', status_code=204)
+    def delete_dataset(dataset_id: str, expected_version: str | None = None, _: Principal = Depends(admin_dep)):
+        catalog.delete(dataset_id, expected_version=expected_version)
 
     @app.put("/v1/control/policies/{policy_id}")
     def put_policy(policy_id: str, body: dict, _: Principal = Depends(admin_dep)):

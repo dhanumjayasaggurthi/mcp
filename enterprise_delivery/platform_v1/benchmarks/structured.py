@@ -8,7 +8,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-from sqlalchemy import Column, Index, Integer, MetaData, String, Table, create_engine
+from sqlalchemy import Column, Index, Integer, MetaData, String, Table, create_engine, func, select
 from enterprise_data_platform.catalog import InMemoryCatalog
 from enterprise_data_platform.cursor import CursorCodec
 from enterprise_data_platform.models import (AccessPolicy, Capability, DataProduct, FieldDefinition,
@@ -35,6 +35,12 @@ def main():
         for start in range(0, a.rows, 5000):
             with engine.begin() as c:
                 c.execute(table.insert(), [dict(id=i, tenant=str(i % 10), body='synthetic record') for i in range(start, min(start+5000, a.rows))])
+    # Explicit benchmark setup verification, outside the measured API path.
+    # Reusing a database with the wrong profile must never produce a scale claim.
+    with engine.connect() as conn:
+        actual_rows = conn.scalar(select(func.count()).select_from(table))
+    if actual_rows != a.rows:
+        raise ValueError(f'benchmark database has {actual_rows} rows, expected {a.rows}')
     product = DataProduct(id='bench', display_name='Benchmark', version='1', status='active',
         source=SourceBinding(connector='sqlite', environment='test', object_name='bench'),
         identity_fields=['id'], tenant_field='tenant', capabilities={Capability.QUERY},

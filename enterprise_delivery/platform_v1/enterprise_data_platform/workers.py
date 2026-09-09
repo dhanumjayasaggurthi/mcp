@@ -34,10 +34,16 @@ def main():
     for sig in [signal.SIGTERM, signal.SIGINT]:
         signal.signal(sig, lambda *_: stopping.set())
     if args.role == 'export':
+        if runtime.object_storage is None:
+            runtime.close()
+            raise RuntimeError('export worker requires object storage configuration')
         handler = ExportWorker(queue=runtime.queue, service=runtime.service, object_storage=runtime.object_storage,
             limits=runtime.limits)
         kind = 'export'
     else:
+        if runtime.search is None or runtime.embedder is None:
+            runtime.close()
+            raise RuntimeError('indexing worker requires search and embedding configuration')
         handler = IngestionWorker(queue=runtime.queue, catalog=runtime.catalog, chunk_store=runtime.chunks,
             keyword_sink=OpenSearchSink(runtime.search, 'keyword'), vector_sink=OpenSearchSink(runtime.search, 'vector'),
             embedder=runtime.embedder, governor=runtime.service.governor)

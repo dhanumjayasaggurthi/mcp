@@ -142,8 +142,13 @@ def sql_factory(kind, registration, secrets):
             'options': f'-c statement_timeout={registration.statement_timeout_seconds * 1000} -c default_transaction_read_only=on',
             'sslmode': 'verify-full'}
     elif kind in {'mysql', 'mariadb'}:
+        if url.get_driver_name() != 'pymysql':
+            raise ValueError('MySQL/MariaDB adapter requires the PyMySQL driver; register other drivers as validated plugins')
+        if kind == 'mariadb':
+            url = url.set(drivername='mariadb+pymysql')
         connect_args = {'connect_timeout': registration.pool_timeout_seconds,
-            'read_timeout': registration.statement_timeout_seconds, 'write_timeout': registration.statement_timeout_seconds}
+            'read_timeout': registration.statement_timeout_seconds, 'write_timeout': registration.statement_timeout_seconds,
+            'ssl_verify_cert': True, 'ssl_verify_identity': True}
     elif kind == 'snowflake':
         connect_args = {'login_timeout': registration.pool_timeout_seconds,
             'network_timeout': registration.statement_timeout_seconds,
@@ -153,7 +158,7 @@ def sql_factory(kind, registration, secrets):
     engine = create_engine(url, pool_size=registration.pool_size, max_overflow=0,
         pool_timeout=registration.pool_timeout_seconds, pool_pre_ping=True, pool_recycle=300, connect_args=connect_args)
     caps = ConnectorCapabilities(aggregation=True, statistics=kind == 'postgres', plan_inspection=kind == 'postgres',
-        statement_timeout=kind in {'postgres', 'mysql', 'mariadb', 'snowflake'}, native_nulls_last=kind not in {'mysql', 'mariadb'})
+        statement_timeout=kind in {'postgres', 'mysql', 'mariadb', 'snowflake'}, native_nulls_last=engine.dialect.name not in {'mysql', 'mariadb', 'mssql'})
     return SQLConnector(engine, caps, registration.statement_timeout_seconds, registration.max_scan_rows,
         registration.native_scan_governor)
 
