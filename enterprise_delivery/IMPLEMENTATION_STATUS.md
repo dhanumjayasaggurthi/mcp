@@ -1,3 +1,13 @@
+# Implementation status
+
+The durable production runtime, source framework, shared governor, search/indexing/export adapters, OIDC identity, compatibility layer, deployment templates and test harnesses are now implemented. The source-specific and environment qualification gates are recorded in [PRODUCTION_READINESS_CHECKLIST.md](../PRODUCTION_READINESS_CHECKLIST.md). This status does not certify production capacity or replace those gates.
+
+[PERFORMANCE_RESULTS.md](../PERFORMANCE_RESULTS.md) contains actual paired measurements. [TARGET_ARCHITECTURE.md](../TARGET_ARCHITECTURE.md) explicitly identifies unimplemented federated/materialized/result-cache execution and standard SQL frontend work. A shipped interface alone is not labeled a qualified production adapter.
+
+The table below is retained as the historical September 6 reference/core status. Its COMPLETE labels apply to that scope and must not be interpreted as certification of the new deployment or external infrastructure.
+
+---
+
 # Enterprise Data Retrieval & Control Hub — Execution Status
 
 **Execution date:** 2026-09-06  
@@ -59,3 +69,4 @@ These are the next gated tasks and cannot be truthfully marked complete from the
 ## Gate rule for every remaining task
 
 **Implement → unit test → integration test → security/performance test as applicable → record evidence → mark COMPLETE → proceed.** Any failed gate blocks the next deployment/promotion step; the previous active version remains serving traffic.
+

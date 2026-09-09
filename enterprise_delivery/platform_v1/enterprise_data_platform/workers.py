@@ -29,7 +29,6 @@ def main():
     runtime = build_runtime()
     from pathlib import Path
     ready = Path('/tmp/edp-ready')
-    ready.touch()
     stopping = Event()
     for sig in [signal.SIGTERM, signal.SIGINT]:
         signal.signal(sig, lambda *_: stopping.set())
@@ -48,6 +47,7 @@ def main():
             keyword_sink=OpenSearchSink(runtime.search, 'keyword'), vector_sink=OpenSearchSink(runtime.search, 'vector'),
             embedder=runtime.embedder, governor=runtime.service.governor)
         kind = 'ingestion'
+    ready.touch()
     try:
         while not stopping.is_set():
             job = runtime.queue.claim(kind)

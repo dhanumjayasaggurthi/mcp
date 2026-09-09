@@ -6,7 +6,7 @@ spec:
   replicas: 3
   revisionHistoryLimit: 3
   selector:
-    matchLabels: {app: edp, role: api}
+    matchLabels: {app: edp, role: api, release: stable}
   strategy:
     rollingUpdate: {maxSurge: 1, maxUnavailable: 0}
   template:

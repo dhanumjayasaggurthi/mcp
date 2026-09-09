@@ -32,12 +32,6 @@ class RequestBoundary:
             return await self.app(scope, receive, send)
         from starlette.responses import JSONResponse
         headers = dict(scope['headers'])
-        try:
-            length = int(headers.get(b'content-length', b'0') or 0)
-        except ValueError:
-            return await JSONResponse({'detail': 'invalid content length', 'code': 'bad_request'}, 400)(scope, receive, send)
-        if length > self.max_body_bytes:
-            return await JSONResponse({'detail': 'request body exceeds byte budget', 'code': 'body_too_large'}, 413)(scope, receive, send)
         context = ExecutionContext()
         from opentelemetry import trace
         span_context = trace.get_current_span().get_span_context()
@@ -46,10 +40,21 @@ class RequestBoundary:
         supplied = headers.get(b'x-request-id', b'').decode('ascii', 'ignore')
         if not span_context.is_valid and re.fullmatch(r'[a-zA-Z0-9-]{1,64}', supplied):
             context.trace_id = supplied
+        async def reject(detail, status):
+            return await JSONResponse({'detail': detail, 'code': str(status), 'trace_id': context.trace_id}, status,
+                headers={'x-request-id': context.trace_id, 'x-trace-id': context.trace_id})(scope, receive, send)
+        try:
+            length = int(headers.get(b'content-length', b'0') or 0)
+            if length < 0:
+                raise ValueError('negative content length')
+        except ValueError:
+            return await reject('invalid content length', 400)
+        if length > self.max_body_bytes:
+            return await reject('request body exceeds byte budget', 413)
         try:
             seconds = min(self.max_seconds, max(.1, int(headers.get(b'x-request-timeout-ms', b'30000')) / 1000))
         except ValueError:
-            return await JSONResponse({'detail': 'invalid request timeout'}, 400)(scope, receive, send)
+            return await reject('invalid request timeout', 400)
         context.deadline = time.monotonic() + seconds
         context.idempotency_key = headers.get(b'idempotency-key', b'').decode('ascii', 'ignore') or None
         token = current_context.set(context)

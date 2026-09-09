@@ -3,6 +3,8 @@ from __future__ import annotations
 from typing import Callable
 
 from fastapi import Depends, FastAPI, HTTPException, Request, Response, status
+from fastapi.exceptions import RequestValidationError
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from .catalog import CatalogConflict, CatalogNotFound, CatalogStore
 from .control_models import AgentRegistration, ClientRegistration, ControlOverview, GuardrailRule, IndexDeployment, ManagedStatus
@@ -53,6 +55,18 @@ def create_app(
     app = FastAPI(title="Enterprise Governed Data Retrieval API", version="1.0.0")
     promotion_controller = promotion_controller or IndexPromotionController()
     operations_provider = operations_provider or InMemoryOperationsProvider()
+
+    @app.exception_handler(StarletteHTTPException)
+    async def http_error_handler(_: Request, exc: StarletteHTTPException):
+        result = _json_error(exc.status_code, exc.detail)
+        if exc.headers:
+            result.headers.update(exc.headers)
+        return result
+
+    @app.exception_handler(RequestValidationError)
+    async def validation_error_handler(_: Request, exc: RequestValidationError):
+        # Preserve the 422 contract without reflecting submitted values or bodies.
+        return _json_error(422, 'request validation failed')
 
     async def principal_dep(request: Request) -> Principal:
         from starlette.concurrency import run_in_threadpool

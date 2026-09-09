@@ -104,3 +104,55 @@ def test_deadline_fallback_is_explicit_and_plan_changes_request():
 ])
 def test_null_filters_fail_closed_consistently(expr):
     assert not eval_filter({'x':None},expr)
+
+
+@pytest.mark.parametrize('path,method,kwargs,status', [
+    ('/v1/control/overview', 'get', {}, 403),
+    ('/missing-route', 'get', {}, 404),
+    ('/v1/datasets/orders/query', 'post', {'json': {'limit': 'private-input-value'}}, 422),
+    ('/v1/health', 'get', {'headers': {'content-length': '1000001'}}, 413),
+    ('/v1/health', 'get', {'headers': {'content-length': '-1'}}, 400),
+    ('/v1/health', 'get', {'headers': {'x-request-timeout-ms': 'invalid'}}, 400),
+])
+def test_api_errors_keep_trace_without_reflecting_inputs(path, method, kwargs, status):
+    from test_api_control import make_client
+    with make_client() as client:
+        response = getattr(client, method)(path, **kwargs)
+    assert response.status_code == status
+    assert response.json()['trace_id'] == response.headers['x-trace-id']
+    assert response.json()['code'] == str(status)
+    assert 'private-input-value' not in response.text
+
+
+def test_auth_error_preserves_bearer_challenge():
+    from fastapi import HTTPException
+    from test_api_control import make_client
+    with make_client() as client:
+        def deny():
+            raise HTTPException(401, 'authentication required', headers={'WWW-Authenticate': 'Bearer'})
+        client.app.dependency_overrides[client.app.state.principal_dependency] = deny
+        response = client.get('/v1/datasets')
+    assert response.status_code == 401
+    assert response.headers['www-authenticate'] == 'Bearer'
+    assert response.json()['trace_id'] == response.headers['x-trace-id']
+
+
+def test_reranker_bounds_outbound_request_and_checks_provider_scores():
+    from enterprise_data_platform.retrieval import HTTPReranker
+    class Provider:
+        calls = 0
+        def request(self, *args, **kwargs):
+            self.calls += 1
+            return {'results': [{'index': 1, 'relevance_score': .9}, {'index': 0, 'relevance_score': .2}]}
+    provider = Provider()
+    reranker = HTTPReranker(provider)
+    assert reranker.score('query', ['first', 'second'], 'approved-model') == [.2, .9]
+    assert reranker.score('query', [], 'approved-model') == []
+    with pytest.raises(ValueError, match='byte budget'):
+        reranker.score('query', ['界' * 20000] * 20, 'approved-model')
+    with pytest.raises(ValueError, match='character budget'):
+        reranker.score('query', ['x' * 20001], 'approved-model')
+    assert provider.calls == 1
+    provider.request = lambda *args, **kwargs: {'results': [{'index': 0, 'relevance_score': float('nan')}]}
+    with pytest.raises(ValueError, match='non-finite'):
+        reranker.score('query', ['text'], 'approved-model')

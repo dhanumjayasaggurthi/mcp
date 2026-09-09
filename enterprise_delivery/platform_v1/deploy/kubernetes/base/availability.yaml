@@ -16,7 +16,7 @@ kind: PodDisruptionBudget
 metadata: {name: edp-api}
 spec:
   minAvailable: 2
-  selector: {matchLabels: {app: edp, role: api}}
+  selector: {matchLabels: {app: edp, role: api, release: stable}}
 ---
 apiVersion: policy/v1
 kind: PodDisruptionBudget

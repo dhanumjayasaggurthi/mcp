@@ -1,4 +1,5 @@
 """Bounded reranking and diversification over already-authorized candidates."""
+import json
 import math
 from typing import Protocol
 from .durable import fingerprint
@@ -13,7 +14,14 @@ class HTTPReranker:
         self.client = client
 
     def score(self, query, texts, profile):
-        response = self.client.request('POST', '/rerank', body={'query': query, 'documents': texts, 'model': profile})
+        if len(texts) > 1000 or len(query) > 20000 or any(len(text) > 20000 for text in texts):
+            raise ValueError('reranker input exceeds candidate or character budget')
+        if not texts:
+            return []
+        body = {'query': query, 'documents': texts, 'model': profile}
+        if len(json.dumps(body, ensure_ascii=False).encode('utf-8')) > 1_000_000:
+            raise ValueError('reranker input exceeds byte budget')
+        response = self.client.request('POST', '/rerank', body=body)
         rows = sorted(response['results'], key=lambda r: r['index'])
         if [r['index'] for r in rows] != list(range(len(texts))):
             raise ValueError('reranker returned an invalid batch')
