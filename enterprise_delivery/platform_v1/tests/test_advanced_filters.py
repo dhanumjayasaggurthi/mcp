@@ -117,3 +117,13 @@ def test_search_cursor_is_explicitly_rejected_and_original_ranks_survive():
     service, _, _ = build_service()
     with pytest.raises(QueryValidationError, match='bounded top-k'):
         service.keyword_search(principal(), 'regulatory-docs', SearchRequest(query='test', cursor='ignored-before'))
+
+
+def test_json_type_mismatch_preserves_unknown_in_canonical_boolean_filters():
+    row={'id':'allowed','content':{'amount':'not a number','flag':1,'items':'abc'}}
+    amount={'field':'content','path':['amount'],'op':'gt','value':4}
+    assert not eval_filter(row,amount)
+    assert not eval_filter(row,{'not':amount})
+    assert eval_filter(row,{'or':[amount,{'field':'id','op':'eq','value':'allowed'}]})
+    assert not eval_filter(row,{'field':'content','path':['flag'],'op':'eq','value':True})
+    assert not eval_filter(row,{'field':'content','path':['items',0],'op':'eq','value':'a'})

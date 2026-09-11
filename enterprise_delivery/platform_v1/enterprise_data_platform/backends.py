@@ -100,7 +100,8 @@ def _filter_value(row, expr):
         return None if value is None else not value
     actual, op, value = row.get(expr['field']), expr['op'], expr.get('value')
     for part in expr.get('path', []):
-        try: actual = actual[part]
+        try:
+            actual = actual[part] if isinstance(actual, dict) and isinstance(part, str) or isinstance(actual, list) and type(part) is int else None
         except (KeyError, IndexError, TypeError): actual = None
     if op == 'exists':
         return (actual is not None) == (True if value is None else value)
@@ -108,6 +109,10 @@ def _filter_value(row, expr):
         return (actual is None) if op == 'eq' else (actual is not None)
     if actual is None:
         return None
+    if 'path' in expr:
+        sample = next((v for v in value if v is not None), None) if isinstance(value, list) else value
+        compatible = type(actual) is type(sample) or type(actual) in {int, float} and type(sample) in {int, float}
+        if sample is not None and not compatible: return None
     from datetime import date, datetime
     if isinstance(actual, (date, datetime)):
         convert = datetime.fromisoformat if isinstance(actual, datetime) else date.fromisoformat
