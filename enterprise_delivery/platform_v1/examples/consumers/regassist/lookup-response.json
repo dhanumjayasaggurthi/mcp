@@ -1,0 +1,30 @@
+{
+  "rows": [
+    {
+      "chunk_id": "chunk-example-001",
+      "doc_id": "DOC-EXAMPLE-001",
+      "chunk_index": 0,
+      "chunk_text": "Example authorized document text.",
+      "file_name": "protocol-example.pdf",
+      "section_title": "Safety reporting",
+      "page_start": 12,
+      "page_end": 13
+    },
+    {
+      "chunk_id": "chunk-example-002",
+      "doc_id": "DOC-EXAMPLE-001",
+      "chunk_index": 1,
+      "chunk_text": "Additional example authorized text.",
+      "file_name": "protocol-example.pdf",
+      "section_title": "Safety reporting",
+      "page_start": 13,
+      "page_end": 14
+    }
+  ],
+  "next_cursor": null,
+  "count": null,
+  "count_is_estimate": false,
+  "trace_id": "01JEXAMPLELOOKUP0000000000000",
+  "has_more": false,
+  "returned_rows": 2
+}

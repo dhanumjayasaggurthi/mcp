@@ -1,0 +1,71 @@
+{
+  "select": [
+    "chunk_id",
+    "doc_id",
+    "file_name",
+    "page_start",
+    "section_title",
+    "chunk_text"
+  ],
+  "filter": {
+    "and": [
+      {
+        "field": "doc_id",
+        "op": "in",
+        "value": [
+          "DOC-EXAMPLE-001",
+          "DOC-EXAMPLE-002"
+        ]
+      },
+      {
+        "field": "page_start",
+        "op": "between",
+        "value": [
+          1,
+          20
+        ]
+      },
+      {
+        "field": "content_types",
+        "op": "array_overlaps",
+        "value": [
+          "text",
+          "table"
+        ]
+      },
+      {
+        "or": [
+          {
+            "field": "chunk_level",
+            "op": "eq",
+            "value": "section"
+          },
+          {
+            "field": "section_title",
+            "op": "contains",
+            "value": "safety"
+          }
+        ]
+      },
+      {
+        "not": {
+          "field": "file_name",
+          "op": "ends_with",
+          "value": ".tmp"
+        }
+      }
+    ]
+  },
+  "order_by": [
+    {
+      "field": "doc_id",
+      "direction": "asc"
+    },
+    {
+      "field": "chunk_index",
+      "direction": "asc"
+    }
+  ],
+  "limit": 100,
+  "count_mode": "none"
+}

@@ -400,7 +400,14 @@ class PlatformService:
     @staticmethod
     def _retrieval_response(product, results):
         from .chunks import retrieval_version
-        kind = results[0].source.get('score_kind') if results else None
+        kind = None
+        if results:
+            if any('rerank' in hit.scores for hit in results):
+                kind = 'rerank'
+            elif any('hybrid' in hit.scores for hit in results):
+                kind = 'weighted_rrf'
+            else:
+                kind = results[0].source.get('score_kind')
         return RetrievalResponse(results=results, trace_id=trace_id(), dataset_id=product.id,
             dataset_version=product.version, index_version=retrieval_version(product), score_kind=kind)
 
@@ -448,4 +455,3 @@ class PlatformService:
         if not return_text:
             out.text = None
         return out
-

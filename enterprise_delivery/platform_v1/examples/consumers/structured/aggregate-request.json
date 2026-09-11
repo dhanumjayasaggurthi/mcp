@@ -1,0 +1,20 @@
+{
+  "group_by": [
+    "chunk_level"
+  ],
+  "measures": [
+    {
+      "name": "matching_chunks",
+      "function": "count"
+    }
+  ],
+  "filter": {
+    "field": "page_start",
+    "op": "between",
+    "value": [
+      1,
+      20
+    ]
+  },
+  "limit": 100
+}

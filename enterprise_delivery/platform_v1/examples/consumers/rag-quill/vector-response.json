@@ -1,0 +1,45 @@
+{
+  "dataset_id": "rdh.rimdocs.clinical",
+  "dataset_version": "2026.09.1",
+  "index_version": "rdh-clinical-embeddings-v3",
+  "score_kind": "pgvector_cosine",
+  "results": [
+    {
+      "record_id": "DOC-EXAMPLE-001",
+      "chunk_id": "chunk-example-002",
+      "score": 0.9124,
+      "text": "Example authorized text describing adverse event obligations.",
+      "metadata": {
+        "file_name": "protocol-example.pdf",
+        "section_title": "Safety reporting",
+        "page_start": 13,
+        "page_end": 14,
+        "content_types": [
+          "text"
+        ]
+      },
+      "source": {
+        "dataset": "rdh.rimdocs.clinical",
+        "dataset_version": "2026.09.1",
+        "record_id": "DOC-EXAMPLE-001",
+        "chunk_id": "chunk-example-002",
+        "source_version": "2026-09-10T14:22:00+00:00",
+        "score_kind": "pgvector_cosine",
+        "citations": {
+          "document_name": "protocol-example.pdf",
+          "section": "Safety reporting",
+          "page_start": 13,
+          "page_end": 14
+        }
+      },
+      "scores": {
+        "vector": 0.9124
+      },
+      "ranks": {
+        "vector": 1
+      }
+    }
+  ],
+  "trace_id": "01JEXAMPLEVECTOR000000000000",
+  "next_cursor": null
+}

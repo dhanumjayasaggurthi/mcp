@@ -4,6 +4,7 @@ from typing import Callable
 
 from fastapi import Depends, FastAPI, HTTPException, Request, Response, status
 from fastapi.exceptions import RequestValidationError
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from .catalog import CatalogConflict, CatalogNotFound, CatalogStore
@@ -12,11 +13,13 @@ from .control_state import ControlState, ResourceNotFound
 from .cursor import CursorError
 from .models import (
     AccessPolicy,
+    ErrorResponse,
     LookupRequest,
     ExportJob,
     ExportRequest,
     Principal,
     RetrievalResponse,
+    RetrievalContractResponse,
     RetrieveRequest,
     SearchRequest,
     StructuredQueryRequest,
@@ -53,7 +56,31 @@ def create_app(
     gateway or via a resolver supplied by the host application.
     """
 
-    app = FastAPI(title="Enterprise Governed Data Retrieval API", version="1.0.0")
+    error_responses = {
+        code: {"model": ErrorResponse, "description": description}
+        for code, description in {
+            400: "Invalid request semantics",
+            401: "Missing or invalid identity",
+            403: "Operation is not authorized",
+            404: "Dataset or resource not found",
+            409: "Version or idempotency conflict",
+            413: "Request body exceeds the configured budget",
+            422: "Request does not match the JSON schema",
+            429: "Capacity or rate limit reached",
+            503: "A required backend is unavailable",
+            504: "Request deadline exceeded",
+        }.items()
+    }
+    app = FastAPI(
+        title="Enterprise Governed Data Retrieval API",
+        version="1.0.0",
+        description="Governed structured and retrieval APIs for registered RDH data products.",
+        responses=error_responses,
+    )
+    bearer_scheme = HTTPBearer(
+        auto_error=False,
+        description="Environment-issued OAuth 2.0 bearer access token.",
+    )
     promotion_controller = promotion_controller or IndexPromotionController()
     operations_provider = operations_provider or InMemoryOperationsProvider()
 
@@ -69,7 +96,10 @@ def create_app(
         # Preserve the 422 contract without reflecting submitted values or bodies.
         return _json_error(422, 'request validation failed')
 
-    async def principal_dep(request: Request) -> Principal:
+    async def principal_dep(
+        request: Request,
+        _: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
+    ) -> Principal:
         from starlette.concurrency import run_in_threadpool
         from .context import current_actor
         try:
@@ -224,6 +254,78 @@ def create_app(
             if decision.allowed:
                 enabled.append(capability.value)
         return {"dataset_id": dataset_id, "capabilities": sorted(enabled)}
+
+    @app.get(
+        "/v1/datasets/{dataset_id}/retrieval-contract",
+        response_model=RetrievalContractResponse,
+    )
+    def retrieval_contract(dataset_id: str, principal: Principal = Depends(principal_dep)):
+        """Return the caller-specific, safe contract required by retrieval clients."""
+        from .chunks import retrieval_version
+        from .models import Capability
+
+        product = catalog.get(dataset_id)
+        endpoints = {
+            Capability.KEYWORD: f"/v1/datasets/{dataset_id}/search/keyword",
+            Capability.VECTOR: f"/v1/datasets/{dataset_id}/search/vector",
+            Capability.HYBRID: f"/v1/datasets/{dataset_id}/search/hybrid",
+            Capability.RETRIEVE: f"/v1/datasets/{dataset_id}/retrieve",
+        }
+        operations = {}
+        decisions = {}
+        for capability, endpoint in endpoints.items():
+            if capability not in product.capabilities:
+                continue
+            decision = visible_decision(principal, product, capability)
+            if not decision.allowed:
+                continue
+            decisions[capability] = decision
+            citation_labels = []
+            if product.retrieval and product.retrieval.backend == "postgres" and product.retrieval.postgres:
+                citation_labels = sorted(
+                    label
+                    for label, field in product.retrieval.postgres.citation_fields.items()
+                    if field in decision.allowed_fields - decision.masked_fields
+                )
+            operations[capability.value] = {
+                "endpoint": endpoint,
+                "oauth_scope": f"edp:{capability.value}",
+                "max_top_k": decision.max_top_k,
+                "filters_url": f"/v1/datasets/{dataset_id}/filters?operation={capability.value}",
+                "citation_labels": citation_labels,
+            }
+        if not operations:
+            raise AccessDenied("retrieval contract access denied")
+
+        vector = None
+        retrieval = product.retrieval
+        # Direct embedding inputs belong to the vector-search contract. Hybrid
+        # and retrieve accept query strings and keep their embedding details
+        # server-side.
+        vector_visible = Capability.VECTOR in decisions
+        if vector_visible and retrieval and retrieval.vector:
+            vector = {
+                "profile_id": retrieval.vector.profile_id,
+                "dimensions": retrieval.vector.dimensions,
+                "distance": retrieval.vector.distance,
+                "accepted_inputs": ["vector"] + (["query_text"] if service.embedder is not None else []),
+                "query_text_supported": service.embedder is not None,
+            }
+        return {
+            "dataset_id": product.id,
+            "dataset_version": product.version,
+            "index_version": retrieval_version(product),
+            "operations": operations,
+            "vector": vector,
+            "result_identity": ["record_id", "chunk_id"],
+            "pagination": "bounded_top_k",
+            "scores": {
+                "route_local": True,
+                "comparable_across_modes": False,
+                "score_kind_reported_per_response": True,
+                "ranks_reported_per_mode": True,
+            },
+        }
 
     @app.get("/v1/datasets/{dataset_id}/filters")
     def filters(dataset_id: str, operation: str = "query", principal: Principal = Depends(principal_dep)):
@@ -424,4 +526,3 @@ def _json_error(status_code: int, detail: str):
 
     from .context import trace_id
     return JSONResponse(status_code=status_code, content={'detail': detail, 'code': str(status_code), 'trace_id': trace_id()})
-

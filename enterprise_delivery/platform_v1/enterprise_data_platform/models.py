@@ -284,6 +284,12 @@ class StructuredQueryResponse(BaseModel):
     returned_rows: int = 0
 
 
+class ErrorResponse(BaseModel):
+    detail: str
+    code: str
+    trace_id: str
+
+
 class LookupRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -369,6 +375,40 @@ class RetrievalResponse(BaseModel):
     next_cursor: Optional[str] = None
 
 
+class RetrievalOperationContract(BaseModel):
+    endpoint: str
+    oauth_scope: str
+    max_top_k: int = Field(ge=1, le=1000)
+    filters_url: str
+    citation_labels: List[str] = Field(default_factory=list)
+
+
+class RetrievalVectorContract(BaseModel):
+    profile_id: str
+    dimensions: int = Field(ge=1)
+    distance: Literal["cosine", "dot", "l2"]
+    accepted_inputs: List[Literal["vector", "query_text"]]
+    query_text_supported: bool
+
+
+class RetrievalScoreContract(BaseModel):
+    route_local: bool = True
+    comparable_across_modes: bool = False
+    score_kind_reported_per_response: bool = True
+    ranks_reported_per_mode: bool = True
+
+
+class RetrievalContractResponse(BaseModel):
+    dataset_id: str
+    dataset_version: str
+    index_version: str
+    operations: Dict[str, RetrievalOperationContract]
+    vector: Optional[RetrievalVectorContract] = None
+    result_identity: List[str]
+    pagination: Literal["bounded_top_k"]
+    scores: RetrievalScoreContract
+
+
 class ExportRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -405,4 +445,3 @@ class ServiceHealth(BaseModel):
     name: str
     status: Literal["healthy", "degraded", "down"]
     details: Dict[str, Any] = Field(default_factory=dict)
-

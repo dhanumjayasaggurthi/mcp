@@ -1,0 +1,20 @@
+{
+  "select": [
+    "chunk_id",
+    "doc_id",
+    "file_name",
+    "page_start",
+    "section_title",
+    "chunk_text"
+  ],
+  "filter": {
+    "field": "page_start",
+    "op": "between",
+    "value": [
+      1,
+      20
+    ]
+  },
+  "format": "parquet",
+  "compression": "zstd"
+}

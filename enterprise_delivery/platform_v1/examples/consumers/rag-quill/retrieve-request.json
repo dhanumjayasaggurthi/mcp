@@ -1,0 +1,13 @@
+{
+  "query": "serious adverse event reporting requirements",
+  "mode": "hybrid",
+  "filter": {
+    "field": "content_types",
+    "op": "array_overlaps",
+    "value": [
+      "text"
+    ]
+  },
+  "top_k": 10,
+  "include_metadata": true
+}

@@ -4,6 +4,8 @@ This release adds direct PostgreSQL retrieval over the supplied chunk-table layo
 
 This is deployable application code, not evidence that an RDH production environment has been deployed or capacity-qualified. Supply environment configuration, authoritative access rules and the actual embedding profile before enabling consumers.
 
+Consumer-facing contracts and checked input/output examples are separated by team in [consumer API documentation](docs/consumers/README.md).
+
 ## What RDH provides
 
 | Team question | Implemented response |

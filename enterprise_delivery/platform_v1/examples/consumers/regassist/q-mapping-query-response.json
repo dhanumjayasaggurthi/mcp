@@ -1,0 +1,14 @@
+{
+  "rows": [
+    {
+      "haq_id": "HAQ-EXAMPLE-001",
+      "rdh_doc_id": "DOC-EXAMPLE-001"
+    }
+  ],
+  "next_cursor": null,
+  "count": null,
+  "count_is_estimate": false,
+  "trace_id": "01JEXAMPLEMAPPING00000000000",
+  "has_more": false,
+  "returned_rows": 1
+}
