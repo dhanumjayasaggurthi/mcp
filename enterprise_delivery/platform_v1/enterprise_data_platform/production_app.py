@@ -151,12 +151,13 @@ def build_runtime():
         if len(rules) == 1000:
             raise RuntimeError('guardrail snapshot exceeds supported bound')
         return rules
+    from .postgres_retrieval import RetrievalBackendRouter
     service = GovernedService(store=store, control=control, governor=ResourceGovernor(store, limits),
         planner=GovernedPlanner(os.getenv('EDP_ENGINE_NAME', 'Adaptive Governed Execution Engine')), metrics=Metrics(),
         catalog=catalog, policies=policies,
         cursor_codec=EncryptedCursorCodec(secrets.resolve(required('EDP_CURSOR_SECRET_REF')).encode()),
-        structured=TelemetryProxy(router, 'source'), keyword=TelemetryProxy(OpenSearchBackend(search, 'keyword'), 'keyword') if search else None,
-        vector=TelemetryProxy(OpenSearchBackend(search, 'vector'), 'vector') if search else None,
+        structured=TelemetryProxy(router, 'source'), keyword=TelemetryProxy(RetrievalBackendRouter(router, OpenSearchBackend(search, 'keyword') if search else None, 'keyword'), 'keyword'),
+        vector=TelemetryProxy(RetrievalBackendRouter(router, OpenSearchBackend(search, 'vector') if search else None, 'vector'), 'vector'),
         embedder=TelemetryProxy(embedder, 'embedding') if embedder else None, chunks=TelemetryProxy(chunks, 'hydration'), exporter=exporter, guardrails=GuardrailEngine(load_rules),
         retrieval_pipeline=RetrievalPipeline(HTTPReranker(reranking) if reranking else None))
     return Runtime(store, service, catalog, policies, control, router, queue, chunks, storage,
@@ -172,6 +173,8 @@ def create_production_app():
         control_admin_check=lambda p: 'data-platform-admin' in p.groups and 'edp:admin' in p.attributes.get('oauth_scope', '').split(),
         promotion_controller=SQLIndexPromotionController(runtime.store), operations_provider=SQLOperationsProvider(runtime.store),
         readiness_check=runtime.store.ready)
+    from .onboarding import register_onboarding
+    register_onboarding(app, runtime)
     from fastapi.middleware.gzip import GZipMiddleware
     app.add_middleware(GZipMiddleware, minimum_size=1000)
     aliases = SQLRegistry(runtime.store, 'aliases', AliasRegistration)
@@ -212,3 +215,4 @@ def create_production_app():
     app.state.runtime = runtime
     instrument(app)
     return app
+

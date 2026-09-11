@@ -16,7 +16,7 @@ jobs:
     runs-on: ubuntu-latest
     services:
       postgres:
-        image: postgres:16
+        image: pgvector/pgvector:0.8.0-pg16
         env:
           POSTGRES_USER: edp_test
           POSTGRES_PASSWORD: isolated-ci-only
@@ -27,6 +27,7 @@ jobs:
           --health-interval 5s --health-timeout 5s --health-retries 10
     env:
       EDP_TEST_POSTGRES_DSN: postgresql+psycopg://edp_test:isolated-ci-only@127.0.0.1:5432/edp_test
+      EDP_TEST_NATIVE_DSN: postgresql+psycopg://edp_test:isolated-ci-only@127.0.0.1:5432/edp_test
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -141,3 +142,4 @@ jobs:
         run: |
           pip install --require-hashes -r requirements.lock
           PYTHONPATH=. pytest -q tests/test_connector_integration.py
+

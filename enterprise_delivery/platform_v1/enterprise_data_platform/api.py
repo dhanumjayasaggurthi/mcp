@@ -12,6 +12,7 @@ from .control_state import ControlState, ResourceNotFound
 from .cursor import CursorError
 from .models import (
     AccessPolicy,
+    LookupRequest,
     ExportJob,
     ExportRequest,
     Principal,
@@ -224,6 +225,32 @@ def create_app(
                 enabled.append(capability.value)
         return {"dataset_id": dataset_id, "capabilities": sorted(enabled)}
 
+    @app.get("/v1/datasets/{dataset_id}/filters")
+    def filters(dataset_id: str, operation: str = "query", principal: Principal = Depends(principal_dep)):
+        from .models import Capability
+        from .filter_contract import filter_contract
+        if operation not in {"query", "keyword", "vector", "hybrid", "retrieve"}:
+            raise ValueError("invalid filter operation")
+        product, decision = service._decision(principal, dataset_id, Capability(operation))
+        return filter_contract(product, decision, operation)
+
+    @app.post("/v1/datasets/{dataset_id}/records/lookup", response_model=StructuredQueryResponse)
+    def lookup(dataset_id: str, body: LookupRequest, principal: Principal = Depends(principal_dep)):
+        from .models import Capability
+        from .policy import and_filters
+        product, _ = service._decision(principal, dataset_id, Capability.QUERY)
+        field = body.id_field
+        if field is None:
+            if product.retrieval and product.retrieval.backend == "postgres":
+                field = product.retrieval.postgres.record_id_field
+            elif len(product.identity_fields) == 1:
+                field = product.identity_fields[0]
+            else:
+                raise ValueError("choose id_field or use /query for composite identities")
+        return service.query(principal, dataset_id, StructuredQueryRequest(
+            select=body.select, filter=and_filters(body.filter, {"field": field, "op": "in", "value": body.ids}),
+            order_by=body.order_by, limit=body.limit, cursor=body.cursor))
+
     @app.post("/v1/datasets/{dataset_id}/query", response_model=StructuredQueryResponse)
     def query(dataset_id: str, body: StructuredQueryRequest, principal: Principal = Depends(principal_dep)):
         return service.query(principal, dataset_id, body)
@@ -282,6 +309,8 @@ def create_app(
         from .models import DataProduct
 
         product = DataProduct.model_validate({**body, "id": dataset_id})
+        if getattr(app.state, "dataset_validator", None):
+            app.state.dataset_validator(product)
         saved = catalog.put(product, expected_version=expected_version)
         response.headers["ETag"] = saved.version
         return saved.model_dump(mode="json")
@@ -395,3 +424,4 @@ def _json_error(status_code: int, detail: str):
 
     from .context import trace_id
     return JSONResponse(status_code=status_code, content={'detail': detail, 'code': str(status_code), 'trace_id': trace_id()})
+

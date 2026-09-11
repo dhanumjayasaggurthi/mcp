@@ -124,7 +124,9 @@ class SQLAlchemyStructuredBackend(StructuredBackend):
         compiled = statement.compile(dialect=conn.dialect, compile_kwargs={'render_postcompile': True})
         # The statement is built exclusively with SQLAlchemy expressions. User
         # literals stay bound parameters even in the EXPLAIN prefix.
-        value = conn.exec_driver_sql('EXPLAIN (FORMAT JSON) ' + str(compiled), compiled.params,
+        parameters = {key: compiled._bind_processors[key](value) if key in compiled._bind_processors else value
+                      for key, value in compiled.params.items()}
+        value = conn.exec_driver_sql('EXPLAIN (FORMAT JSON) ' + str(compiled), parameters,
             execution_options={'stream_results': False, 'yield_per': None}).scalar_one()
         root = value[0]['Plan']
         scans = []
@@ -197,7 +199,7 @@ class SQLAlchemyStructuredBackend(StructuredBackend):
             existing = self._tables.get(key)
             if existing is not None:
                 return existing
-            table = Table(product.source.object_name, MetaData(), schema=product.source.schema_name, autoload_with=engine)
+            table = Table(product.source.object_name, MetaData(), schema=product.source.schema_name, autoload_with=engine, resolve_fks=False)
             self._tables.put(key, table, size_bytes=max(1024, len(table.columns) * 512))
             return table
 
@@ -215,6 +217,26 @@ class SQLAlchemyStructuredBackend(StructuredBackend):
         col = table.c[expr["field"]]
         op = expr["op"]
         value = expr.get("value")
+        if "path" in expr:
+            from sqlalchemy import JSON
+            if not isinstance(col.type, JSON):
+                raise ValueError("source column does not support JSON paths")
+            for part in expr["path"]: col = col[part]
+            sample = next((v for v in value if v is not None), None) if isinstance(value, list) else value
+            if type(sample) is bool: col = col.as_boolean()
+            elif type(sample) is int: col = col.as_integer()
+            elif type(sample) is float: col = col.as_float()
+            else: col = col.as_string()
+        if op in {"array_contains_all", "array_overlaps", "json_contains"}:
+            from sqlalchemy.dialects.postgresql import ARRAY, JSONB
+            expected = JSONB if op == "json_contains" else ARRAY
+            if not isinstance(col.type, expected):
+                raise ValueError("source dialect/type does not support this filter operator")
+            return col.overlap(value) if op == "array_overlaps" else col.contains(value)
+        if op == "array_is_empty":
+            from sqlalchemy.dialects.postgresql import ARRAY
+            if not isinstance(col.type, ARRAY): raise ValueError("array emptiness requires PostgreSQL array")
+            return func.cardinality(col) == 0 if value is not False else func.cardinality(col) > 0
         if op == "eq":
             return col.is_(None) if value is None else col == value
         if op == "neq":
@@ -229,12 +251,16 @@ class SQLAlchemyStructuredBackend(StructuredBackend):
             return col <= value
         if op == "in":
             return col.in_(value)
+        if op == "not_in":
+            return ~col.in_(value)
         if op == "between":
             return col.between(value[0], value[1])
         if op == "contains":
             return col.ilike(f"%{self._escape_like(str(value))}%", escape="\\")
         if op == "starts_with":
             return col.ilike(f"{self._escape_like(str(value))}%", escape="\\")
+        if op == "ends_with":
+            return col.ilike(f"%{self._escape_like(str(value))}", escape="\\")
         if op == "exists":
             expected = True if value is None else bool(value)
             return col.is_not(None) if expected else col.is_(None)
@@ -266,3 +292,4 @@ class SQLAlchemyStructuredBackend(StructuredBackend):
             # Cursor points at the final all-NULL ordering tuple.
             return False
         return or_(*branches)
+

@@ -94,9 +94,32 @@ class VectorProfile(BaseModel):
     metadata_filter_fields: List[str] = Field(default_factory=list)
 
 
+class PostgresRetrievalProfile(BaseModel):
+    """Administrator-owned mapping onto an existing, pre-chunked source table."""
+    model_config = ConfigDict(extra="forbid")
+
+    chunk_id_field: str = "chunk_id"
+    record_id_field: str = "doc_id"
+    text_field: str = "chunk_text"
+    vector_field: Optional[str] = "chunk_vector"
+    vector_schema: str = Field(default="public", pattern=r"^[a-zA-Z_][a-zA-Z0-9_]*$")
+    cast_vector: bool = False
+    source_version_field: Optional[str] = "updated_at"
+    keyword_tsvector_field: Optional[str] = None
+    text_search_config: str = Field(default="pg_catalog.english", pattern=r"^[a-zA-Z_][a-zA-Z0-9_.]*$")
+    acl_subjects_field: Optional[str] = None
+    acl_groups_field: Optional[str] = None
+    hnsw_ef_search: int = Field(default=100, ge=1, le=1000)
+    hnsw_max_scan_tuples: int = Field(default=20000, ge=100, le=1000000)
+    iterative_scan: bool = True
+    citation_fields: Dict[str, str] = Field(default_factory=dict, max_length=16)
+
+
 class RetrievalProfile(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
+    backend: Literal["opensearch", "postgres"] = "opensearch"
+    postgres: Optional[PostgresRetrievalProfile] = None
     keyword_index: Optional[str] = None
     vector: Optional[VectorProfile] = None
     text: Optional[TextProfile] = None
@@ -128,6 +151,7 @@ class DataProduct(BaseModel):
     retrieval: Optional[RetrievalProfile] = None
     tenant_field: Optional[str] = None
     labels: Dict[str, str] = Field(default_factory=dict)
+    mandatory_filter: Optional[Dict[str, Any]] = None
 
     @field_validator("fields")
     @classmethod
@@ -142,6 +166,29 @@ class DataProduct(BaseModel):
 
     def validate_contract(self) -> None:
         fmap = self.field_map()
+        if len(self.fields) > 512 or len(self.identity_fields) > 16:
+            raise ValueError("dataset exceeds field or identity budget")
+        if self.retrieval and self.retrieval.backend == "postgres":
+            mapping = self.retrieval.postgres
+            if not mapping or not self.retrieval.text:
+                raise ValueError("PostgreSQL retrieval requires postgres and text mappings")
+            required = [mapping.chunk_id_field, mapping.record_id_field, mapping.text_field]
+            optional = [mapping.source_version_field, mapping.keyword_tsvector_field,
+                        mapping.acl_subjects_field, mapping.acl_groups_field]
+            if self.retrieval.vector:
+                required.append(mapping.vector_field)
+                if self.retrieval.vector.dimensions > 2000:
+                    raise ValueError("native vector HNSW supports at most 2000 dimensions; use a qualified halfvec adapter for larger vectors")
+            required += [x for x in optional if x] + list(mapping.citation_fields.values())
+            if any(x not in fmap for x in required):
+                raise ValueError("PostgreSQL retrieval mapping references missing fields")
+            if self.identity_fields != [mapping.chunk_id_field]:
+                raise ValueError("native chunk retrieval requires a unique chunk identity")
+            if self.retrieval.text.source_fields != [mapping.text_field]:
+                raise ValueError("native retrieval uses existing chunk text without re-chunking")
+        from .query_validation import validate_filter
+        validate_filter(self, self.mandatory_filter)
+
         missing_identity = [f for f in self.identity_fields if f not in fmap]
         if missing_identity:
             raise ValueError(f"identity fields missing from schema: {missing_identity}")
@@ -237,6 +284,18 @@ class StructuredQueryResponse(BaseModel):
     returned_rows: int = 0
 
 
+class LookupRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    ids: List[str | int] = Field(min_length=1, max_length=100)
+    id_field: Optional[str] = None
+    select: List[str] = Field(default_factory=list)
+    filter: Optional[Dict[str, Any]] = None
+    order_by: List[SortField] = Field(default_factory=list)
+    limit: int = Field(default=100, ge=1, le=1000)
+    cursor: Optional[str] = None
+
+
 class SearchRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -296,9 +355,15 @@ class RetrievalHit(BaseModel):
     metadata: Dict[str, Any] = Field(default_factory=dict)
     source: Dict[str, Any] = Field(default_factory=dict)
     scores: Dict[str, float] = Field(default_factory=dict)
+    ranks: Dict[str, int] = Field(default_factory=dict)
+    canonical: Optional[Dict[str, Any]] = Field(default=None, exclude=True)
 
 
 class RetrievalResponse(BaseModel):
+    dataset_id: Optional[str] = None
+    dataset_version: Optional[str] = None
+    index_version: Optional[str] = None
+    score_kind: Optional[str] = None
     results: List[RetrievalHit]
     trace_id: str
     next_cursor: Optional[str] = None
@@ -340,3 +405,4 @@ class ServiceHealth(BaseModel):
     name: str
     status: Literal["healthy", "degraded", "down"]
     details: Dict[str, Any] = Field(default_factory=dict)
+

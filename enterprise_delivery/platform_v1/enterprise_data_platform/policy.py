@@ -179,7 +179,17 @@ class PolicyEngine:
         # tenant isolation constraints remain ANDed with that grant scope.
         grant_filter = None if any(not p.mandatory_filter for p in allows) else or_filters(*row_grants)
         tenant_filter = and_filters(*[dict(t) for i, t in enumerate(tenant_constraints) if t not in tenant_constraints[:i]])
-        mandatory_filter = and_filters(grant_filter, tenant_filter)
+        source_acls = []
+        if product.retrieval and product.retrieval.backend == 'postgres':
+            mapping = product.retrieval.postgres
+            for field, identities in [(mapping.acl_subjects_field, [principal.subject]),
+                                       (mapping.acl_groups_field, sorted(principal.groups))]:
+                if field:
+                    branches = [{'field': field, 'op': 'exists', 'value': False},
+                                {'field': field, 'op': 'array_is_empty', 'value': True}]
+                    if identities: branches.append({'field': field, 'op': 'array_overlaps', 'value': identities})
+                    source_acls.append({'or': branches})
+        mandatory_filter = and_filters(product.mandatory_filter, grant_filter, tenant_filter, *source_acls)
 
         return PolicyDecision(
             allowed=True,
@@ -191,3 +201,4 @@ class PolicyEngine:
             max_limit=min(product.max_limit, max(limits) if limits else product.max_limit),
             max_top_k=min(product.max_top_k, max(top_ks) if top_ks else product.max_top_k),
         )
+

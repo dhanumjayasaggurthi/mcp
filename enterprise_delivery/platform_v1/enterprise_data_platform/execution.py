@@ -81,7 +81,7 @@ class GovernedService(PlatformService):
             product, decision = super()._decision(principal, dataset_id, operation)
             if principal.agent_id:
                 decision.max_top_k = min(decision.max_top_k, agent.max_top_k)
-            if product.retrieval and operation in {Capability.KEYWORD, Capability.VECTOR, Capability.HYBRID, Capability.RETRIEVE}:
+            if product.retrieval and product.retrieval.backend != 'postgres' and operation in {Capability.KEYWORD, Capability.VECTOR, Capability.HYBRID, Capability.RETRIEVE}:
                 try:
                     route = self.store.get('routing', dataset_id)['payload']
                 except ResourceNotFound:
@@ -133,3 +133,4 @@ class GovernedService(PlatformService):
     @governed(Capability.EXPORT, 'export')
     def export(self, principal, dataset_id, request):
         return super().export(principal, dataset_id, request)
+

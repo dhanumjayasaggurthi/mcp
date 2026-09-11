@@ -38,6 +38,8 @@ def search_filter(expr):
             pairs = [both(x) for x in node[key]]
             yes, no = [x[0] for x in pairs], [x[1] for x in pairs]
             return (all_(yes), any_(no)) if key == 'and' else (any_(yes), all_(no))
+        if 'path' in node or node['op'] == 'json_contains':
+            raise ValueError('JSON filtering is not supported by the OpenSearch metadata adapter')
         field, op, value = 'metadata.'+node['field'], node['op'], node.get('value')
         exists = {'exists': {'field': field}}
         if op == 'exists' or (op in {'eq','neq'} and value is None):
@@ -45,16 +47,24 @@ def search_filter(expr):
             return (exists, negate(exists)) if present else (negate(exists), exists)
         if op in {'eq','neq'}:
             yes = {'term': {field: value}}
-        elif op == 'in':
+        elif op in {'in', 'not_in'}:
             yes = {'terms': {field: [x for x in value if x is not None]}}
+        elif op in {'contains', 'starts_with', 'ends_with'}:
+            escaped = value.replace('\\', '\\\\').replace('*', '\\*').replace('?', '\\?')
+            pattern = ('*' if op in {'contains', 'ends_with'} else '') + escaped + ('*' if op in {'contains', 'starts_with'} else '')
+            yes = {'wildcard': {field: {'value': pattern, 'case_insensitive': True}}}
+        elif op == 'array_contains_all':
+            yes = all_([{'term': {field: v}} for v in value])
+        elif op == 'array_overlaps':
+            yes = {'terms': {field: value}}
         elif op in {'gt','gte','lt','lte'}:
             yes = {'range': {field: {op: value}}}
         elif op == 'between':
             yes = {'range': {field: {'gte': value[0], 'lte': value[1]}}}
         else:
             raise ValueError('filter operator is not supported by search metadata index')
-        no = {'match_none': {}} if op == 'in' and None in value else all_([exists, negate(yes)])
-        return (no,yes) if op == 'neq' else (yes,no)
+        no = {'match_none': {}} if op in {'in', 'not_in'} and None in value else all_([exists, negate(yes)])
+        return (no,yes) if op in {'neq', 'not_in'} else (yes,no)
     return both(expr)[0]
 
 
@@ -138,7 +148,7 @@ class OpenSearchBackend(KeywordBackend, VectorBackend):
             raise ValueError('search backend exceeded candidate budget')
         return [RetrievalHit(record_id=h['_source']['record_id'], chunk_id=h['_source']['chunk_id'],
             score=h['_score'] or 0, metadata=h['_source'].get('metadata', {}),
-            scores={self.kind: h['_score'] or 0}) for h in hits]
+            scores={self.kind: h['_score'] or 0}, ranks={self.kind: rank}) for rank, h in enumerate(hits, 1)]
 
 
 class OpenSearchSink:
@@ -152,7 +162,11 @@ class OpenSearchSink:
             'metadata': {'type': 'object', 'dynamic': 'strict', 'properties': {}}}
         for f in product.fields:
             if f.filterable or f.vector_metadata:
-                kind = {'int': 'long', 'integer': 'long', 'float': 'double', 'boolean': 'boolean', 'date': 'date', 'datetime': 'date'}.get(f.data_type.lower(), 'keyword')
+                from .query_validation import field_family
+                family = field_family(f.data_type.removesuffix('[]'))
+                if family in {'json', 'opaque'}:
+                    raise ValueError('OpenSearch metadata fields must be scalar or scalar arrays')
+                kind = {'integer': 'long', 'number': 'double', 'boolean': 'boolean', 'date': 'date', 'datetime': 'date'}.get(family, 'keyword')
                 properties['metadata']['properties'][f.name] = {'type': kind}
         index_settings = {'number_of_shards': settings.shards, 'number_of_replicas': settings.replicas,
             'refresh_interval': settings.refresh_interval}
@@ -238,3 +252,4 @@ class HTTPEmbeddingProvider(EmbeddingProvider):
                 result[i] = vector
                 self.cache.put(key, tuple(vector), size_bytes=dimensions * 32)
         return result
+

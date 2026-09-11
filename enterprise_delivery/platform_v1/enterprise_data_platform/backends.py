@@ -99,22 +99,41 @@ def _filter_value(row, expr):
         value = _filter_value(row, expr['not'])
         return None if value is None else not value
     actual, op, value = row.get(expr['field']), expr['op'], expr.get('value')
+    for part in expr.get('path', []):
+        try: actual = actual[part]
+        except (KeyError, IndexError, TypeError): actual = None
     if op == 'exists':
         return (actual is not None) == (True if value is None else value)
     if op in {'eq','neq'} and value is None:
         return (actual is None) if op == 'eq' else (actual is not None)
     if actual is None:
         return None
+    from datetime import date, datetime
+    if isinstance(actual, (date, datetime)):
+        convert = datetime.fromisoformat if isinstance(actual, datetime) else date.fromisoformat
+        value = [convert(v) if isinstance(v, str) else v for v in value] if isinstance(value, list) else convert(value) if isinstance(value, str) else value
     if op == 'eq': return actual == value
     if op == 'neq': return actual != value
     if op == 'gt': return actual > value
     if op == 'gte': return actual >= value
     if op == 'lt': return actual < value
     if op == 'lte': return actual <= value
-    if op == 'in': return True if actual in value else (None if None in value else False)
+    if op in {'in', 'not_in'}:
+        found = True if actual in value else (None if None in value else False)
+        return found if op == 'in' or found is None else not found
     if op == 'between': return value[0] <= actual <= value[1]
     if op == 'contains': return str(value).lower() in str(actual).lower()
     if op == 'starts_with': return str(actual).lower().startswith(str(value).lower())
+    if op == 'ends_with': return str(actual).lower().endswith(str(value).lower())
+    if op == 'array_is_empty': return (len(actual) == 0) == (value is not False)
+    if op == 'array_contains_all': return all(v in actual for v in value)
+    if op == 'array_overlaps': return any(v in actual for v in value)
+    if op == 'json_contains':
+        def contains(a, b):
+            if isinstance(b, dict): return isinstance(a, dict) and all(k in a and contains(a[k], v) for k, v in b.items())
+            if isinstance(b, list): return isinstance(a, list) and all(any(contains(x, v) for x in a) for v in b)
+            return type(a) is type(b) and a == b
+        return contains(actual, value)
     raise ValueError('unsupported filter operation')
 
 
@@ -267,3 +286,4 @@ class InMemoryVectorBackend(VectorBackend):
             ranked.append(hit)
         ranked.sort(key=lambda h: (-h.score, h.record_id, h.chunk_id or ""))
         return ranked[:top_k]
+

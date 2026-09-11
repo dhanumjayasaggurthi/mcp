@@ -192,6 +192,8 @@ class PlatformService:
         if self.keyword is None:
             raise CapabilityUnavailable("keyword backend is not configured")
         product, decision = self._decision(principal, dataset_id, Capability.KEYWORD)
+        if request.cursor:
+            raise QueryValidationError("search uses bounded top-k; cursor pagination is available on /query")
         self._validate_user_fields(request, decision)
         if not self._text_allowed(product, decision):
             raise AccessDenied('search text sources are restricted')
@@ -211,7 +213,7 @@ class PlatformService:
         hits = self._finalize_hits(principal, product, decision, hits, combined_filter,
             query=getattr(request, 'query', None) or getattr(request, 'query_text', None), top_k=top_k,
             return_text=request.return_text, return_metadata=request.return_metadata)
-        return RetrievalResponse(results=hits, trace_id=trace_id())
+        return self._retrieval_response(product, hits)
 
     def vector_search(self, principal: Principal, dataset_id: str, request: VectorSearchRequest) -> RetrievalResponse:
         if self.vector is None:
@@ -258,12 +260,14 @@ class PlatformService:
         hits = self._finalize_hits(principal, product, decision, hits, combined_filter,
             query=getattr(request, 'query', None) or getattr(request, 'query_text', None), top_k=top_k,
             return_text=request.return_text, return_metadata=request.return_metadata)
-        return RetrievalResponse(results=hits, trace_id=trace_id())
+        return self._retrieval_response(product, hits)
 
     def hybrid_search(self, principal: Principal, dataset_id: str, request: SearchRequest) -> RetrievalResponse:
         if self.keyword is None or self.vector is None or self.embedder is None:
             raise CapabilityUnavailable("hybrid search requires keyword, vector and embedding backends")
         product, decision = self._decision(principal, dataset_id, Capability.HYBRID)
+        if request.cursor:
+            raise QueryValidationError("search uses bounded top-k; cursor pagination is available on /query")
         self._validate_user_fields(request, decision)
         if not self._text_allowed(product, decision):
             raise AccessDenied('search text sources are restricted')
@@ -302,12 +306,12 @@ class PlatformService:
         )
         fused = self._finalize_hits(principal, product, decision, fused, combined_filter,
             query=request.query, top_k=top_k, return_text=request.return_text, return_metadata=request.return_metadata)
-        return RetrievalResponse(results=fused, trace_id=trace_id())
+        return self._retrieval_response(product, fused)
 
     def retrieve(self, principal: Principal, dataset_id: str, request: RetrieveRequest) -> RetrievalResponse:
-        if self.chunks is None:
-            raise CapabilityUnavailable("canonical chunk store is not configured")
         product, decision = self._decision(principal, dataset_id, Capability.RETRIEVE)
+        if self.chunks is None and product.retrieval.backend != "postgres":
+            raise CapabilityUnavailable("canonical chunk store is not configured")
         self._validate_user_fields(request, decision)
         if not self._text_allowed(product, decision):
             raise AccessDenied('canonical text sources are restricted')
@@ -354,13 +358,14 @@ class PlatformService:
 
         results = self._finalize_hits(principal, product, decision, hits, combined_filter,
             query=request.query, top_k=top_k, return_text=True, return_metadata=request.include_metadata)
-        return RetrievalResponse(results=results, trace_id=trace_id())
+        return self._retrieval_response(product, results)
 
     def _finalize_hits(self, principal, product, decision, hits, filter_expr, *, query, top_k, return_text, return_metadata):
-        if self.chunks is None:
+        is_native = product.retrieval.backend == 'postgres'
+        if not is_native and self.chunks is None:
             raise CapabilityUnavailable('canonical security verification is not configured')
         ids = [h.chunk_id for h in hits if h.chunk_id]
-        hydrated = self.chunks.get_chunks(product=product, chunk_ids=ids)
+        hydrated = {h.chunk_id: h.canonical for h in hits if h.canonical} if is_native else self.chunks.get_chunks(product=product, chunk_ids=ids)
         clean_hits = []
         for hit in hits:
             chunk = hydrated.get(hit.chunk_id)
@@ -374,10 +379,15 @@ class PlatformService:
             if acl.get('groups') and not principal.groups.intersection(acl['groups']):
                 continue
             clean_hits.append(RetrievalHit(record_id=hit.record_id, chunk_id=hit.chunk_id,
-                score=hit.score, scores=hit.scores, text=str(chunk['text']),
+                score=hit.score, scores=hit.scores, ranks=hit.ranks, text=str(chunk['text']),
                 metadata=self._sanitize_metadata(chunk.get('metadata') or {}, decision.allowed_fields, decision.masked_fields),
                 source={'dataset': product.id, 'dataset_version': product.version, 'record_id': hit.record_id,
-                    'chunk_id': hit.chunk_id, 'source_version': chunk.get('source_version')}))
+                    'chunk_id': hit.chunk_id, 'source_version': chunk.get('source_version'),
+                    **({'score_kind': hit.source['score_kind']} if hit.source.get('score_kind') else {}),
+                    **({'citations': {label: chunk.get('metadata', {}).get(field)
+                        for label, field in product.retrieval.postgres.citation_fields.items()
+                        if field in decision.allowed_fields - decision.masked_fields}}
+                        if is_native else {})}))
         # Canonical ACL check occurs before text reaches the optional reranker.
         results = self.retrieval_pipeline.finish(clean_hits, query=query, profile=product.retrieval, top_k=top_k)
         for hit in results:
@@ -386,6 +396,13 @@ class PlatformService:
             if not return_metadata:
                 hit.metadata = {}
         return results
+
+    @staticmethod
+    def _retrieval_response(product, results):
+        from .chunks import retrieval_version
+        kind = results[0].source.get('score_kind') if results else None
+        return RetrievalResponse(results=results, trace_id=trace_id(), dataset_id=product.id,
+            dataset_version=product.version, index_version=retrieval_version(product), score_kind=kind)
 
     def export(self, principal: Principal, dataset_id: str, request: ExportRequest) -> ExportJob:
         if self.exporter is None:
@@ -431,3 +448,4 @@ class PlatformService:
         if not return_text:
             out.text = None
         return out
+
