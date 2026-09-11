@@ -132,6 +132,11 @@ def validate_filter(product: DataProduct, expr: Dict[str, Any] | None) -> None:
             if family != "json": raise QueryValidationError("path is only valid on JSON fields")
             if op not in SCALAR_OPS | RANGE_OPS | TEXT_OPS:
                 raise QueryValidationError("unsupported JSON path operation")
+            values = value if isinstance(value, list) else [value]
+            kinds = {'number' if type(v) in {int, float} else type(v).__name__ for v in values if v is not None}
+            if len(kinds) > 1: raise QueryValidationError("JSON path operands must have compatible scalar types")
+            if op in RANGE_OPS and kinds == {'bool'}: raise QueryValidationError("JSON booleans do not support ranges")
+            if op == 'between' and value[0] > value[1]: raise QueryValidationError("range lower bound exceeds upper bound")
             return
         if op not in field_operators(field.data_type):
             raise QueryValidationError(f"operator '{op}' is not valid for {field.data_type}")

@@ -101,6 +101,8 @@ def test_native_onboarding_preserves_real_schema_and_hides_embeddings(native_env
     assert report['valid'], report['issues']
     invalid = p.model_copy(deep=True); invalid.retrieval.vector.dimensions = 16
     assert 'source embedding dimension does not match profile' in validate_binding(router, invalid)['issues']
+    wrong_metric=p.model_copy(deep=True); wrong_metric.retrieval.vector.distance='l2'
+    assert 'vector search requires a matching HNSW index' in validate_binding(router,wrong_metric)['issues']
     assert not index_plan(p)['executed']
 
 
@@ -182,3 +184,36 @@ def test_source_delete_is_immediately_absent_without_replication(native_env):
         conn.execute(text(f'DELETE FROM {p.source.schema_name}.doc_chunks_clinical WHERE chunk_id=:id'),{'id':'chunk-10'})
     result=service.keyword_search(principal,p.id,SearchRequest(query='clinical',filter={'field':'chunk_id','op':'eq','value':'chunk-10'},return_text=True))
     assert result.results==[]
+
+
+def test_native_planner_uses_fulltext_and_ann_indexes(native_env):
+    engine, router, p, _ = native_env
+    connector = router.resolve(p)
+    table = connector.backend._table(p, engine)
+    for kind in ['keyword', 'vector']:
+        adapter = PostgresRetrievalBackend(router, kind)
+        statement, _ = adapter.statement(p, table, [table.c.chunk_id], [], 'clinical', [1,1,0,0,0,0,0,0], 10)
+        compiled = statement.compile(dialect=engine.dialect, compile_kwargs={'render_postcompile': True})
+        params = {key: compiled._bind_processors[key](value) if key in compiled._bind_processors else value
+                  for key, value in compiled.params.items()}
+        with engine.begin() as conn:
+            conn.execute(text("SET LOCAL statement_timeout='10s'"))
+            plan = conn.exec_driver_sql('EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) '+str(compiled), params).scalar_one()[0]
+        def indexes(node):
+            return [node.get('Index Name', '')] + [name for child in node.get('Plans', []) for name in indexes(child)]
+        assert any(name.endswith('_fts' if kind == 'keyword' else '_hnsw') for name in indexes(plan['Plan'])), plan
+        assert plan['Plan']['Actual Rows'] <= 10
+        print({'retrieval':kind,'fixture_rows':10000,'execution_ms':plan['Execution Time']})
+
+
+def test_native_heterogeneous_json_values_do_not_break_typed_filters(native_env):
+    engine,router,p,_=native_env
+    service,_,_,principal=service_for(router,p)
+    with engine.begin() as conn:
+        conn.execute(text(f"UPDATE {p.source.schema_name}.doc_chunks_clinical SET attributes=CAST(:value AS jsonb) WHERE chunk_id='chunk-100'"),
+                     {'value':'{"flag":"not a boolean","amount":"not a number"}'})
+    for key,value in [('flag',True),('amount',42)]:
+        result=service.query(principal,p.id,StructuredQueryRequest(filter={'and':[
+            {'field':'chunk_id','op':'eq','value':'chunk-100'},
+            {'field':'attributes','path':[key],'op':'eq','value':value}]}))
+        assert result.rows==[]

@@ -1,0 +1,10 @@
+{
+  "query": "\"adverse event\" OR safety",
+  "filter": {"and": [
+    {"field": "page_start", "op": "gte", "value": 1},
+    {"field": "content_types", "op": "array_overlaps", "value": ["text"]}
+  ]},
+  "top_k": 20,
+  "return_text": true,
+  "return_metadata": true
+}

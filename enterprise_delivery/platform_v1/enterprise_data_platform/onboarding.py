@@ -80,6 +80,19 @@ def inspect_object(router, source_id, body):
             for c in result['columns']:
                 c['data_type'] = types[c['name']]
                 c['filter_operators'] = sorted(field_operators(c['data_type']))
+            # Concurrent builds can leave invalid indexes. Partial indexes do
+            # not cover arbitrary authorized filters, so do not count them.
+            details = conn.execute(text("""SELECT idx.relname AS name,
+                pg_get_indexdef(i.indexrelid) AS definition,
+                i.indisvalid AND i.indisready AND i.indpred IS NULL AS usable
+                FROM pg_index i JOIN pg_class tbl ON tbl.oid=i.indrelid
+                JOIN pg_namespace ns ON ns.oid=tbl.relnamespace
+                JOIN pg_class idx ON idx.oid=i.indexrelid
+                WHERE ns.nspname=COALESCE(:schema,current_schema()) AND tbl.relname=:object"""),
+                {'schema': body.schema_name, 'object': body.object_name}).mappings()
+            by_name = {row['name']: dict(row) for row in details}
+            for index in result['indexes']:
+                index.update(by_name.get(index['name'], {'usable': False}))
             result['pgvector_version'] = conn.execute(text("SELECT extversion FROM pg_extension WHERE extname='vector'")).scalar()
     return result
 
@@ -149,13 +162,15 @@ def validate_binding(router, product):
         import re
         mapping = product.retrieval.postgres
         if report['dialect'] != 'postgresql': issues.append('native retrieval requires PostgreSQL')
-        index_text = ' '.join(' '.join(str(c) for c in [*x['columns'], *x['expressions']]) for x in report['indexes'] if x['method'] == 'gin')
+        index_text = ' '.join(' '.join(str(c) for c in [*x['columns'], *x['expressions']]) for x in report['indexes'] if x['method'] == 'gin' and x.get('usable', True))
         if mapping.keyword_tsvector_field:
-            if field_family(columns.get(mapping.keyword_tsvector_field, {}).get('data_type', '')) != 'opaque':
+            if columns.get(mapping.keyword_tsvector_field, {}).get('data_type', '').split('.')[-1] != 'tsvector':
                 issues.append('keyword_tsvector_field must be a tsvector column')
             if mapping.keyword_tsvector_field not in index_text:
                 issues.append('keyword search requires a GIN index on the configured tsvector column')
-        elif 'to_tsvector' not in index_text or mapping.text_field not in index_text:
+        elif not any(x['method'] == 'gin' and x.get('usable', True) and
+                'to_tsvector' in str(x['expressions']) and mapping.text_field in str(x['expressions']) and
+                mapping.text_search_config.split('.')[-1] in str(x['expressions']) for x in report['indexes']):
             issues.append('keyword search requires a matching to_tsvector GIN index; a trigram index is not full-text indexing')
         if product.retrieval.vector:
             profile = product.retrieval.vector
@@ -165,7 +180,12 @@ def validate_binding(router, product):
             if match and int(match[1]) != profile.dimensions: issues.append('source embedding dimension does not match profile')
             if not match and not mapping.cast_vector:
                 issues.append('unbounded vector column requires cast_vector=true and a matching dimension-specific HNSW expression index')
-            if not any(x['method'] == 'hnsw' and mapping.vector_field in str(x['columns'] + x['expressions']) for x in report['indexes']):
+            ops = {'cosine': 'vector_cosine_ops', 'dot': 'vector_ip_ops', 'l2': 'vector_l2_ops'}[profile.distance]
+            if not any(x['method'] == 'hnsw' and x.get('usable', True) and
+                    mapping.vector_field in str(x['columns'] + x['expressions']) and
+                    ops in x.get('definition', '') and
+                    (not mapping.cast_vector or f'vector({profile.dimensions})' in x.get('definition', ''))
+                    for x in report['indexes']):
                 issues.append('vector search requires a matching HNSW index')
             version = report.get('pgvector_version')
             if mapping.iterative_scan and (not version or tuple(int(v) for v in version.split('.')[:2]) < (0, 8)):

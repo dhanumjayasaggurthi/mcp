@@ -4,6 +4,8 @@ The production entry point is `enterprise_data_platform.production_app:create_pr
 
 See the root [readiness checklist](../../PRODUCTION_READINESS_CHECKLIST.md), [migration plan](../../MIGRATION_PLAN.md), [security configuration](SECURITY.md) and [schema migration](migrations/README.md) before admitting production traffic.
 
+For the supplied RDH PostgreSQL schemas, use the [RDH onboarding guide](RDH_ONBOARDING.md) and `deploy/kubernetes/postgres-native` overlay. Native retrieval reuses source tables and indexes; it does not require OpenSearch or an indexing worker.
+
 ## 1. Verify and build
 
 Use Python 3.12 and Node 22. From this directory:
@@ -26,7 +28,7 @@ kubectl kustomize deploy/kubernetes/canary > /tmp/edp-canary.yaml
 
 The image installs `requirements.production.lock`, runs as UID/GID 10001, and starts the production factory with a 64-request process concurrency limit. Pin the promoted image to its registry digest in an environment overlay. Scan that exact image and its dependencies in the deployment pipeline.
 
-CI provisions PostgreSQL 16, MySQL 8.4, MariaDB 11.4 and OpenSearch 3.2.0 for correctness tests. Optional local integration endpoints are `EDP_TEST_POSTGRES_DSN`, `EDP_TEST_SQL_DSN` and `EDP_TEST_SEARCH_URL`. They must refer to isolated test services: the tests create tables/indexes. CI's isolated MySQL/OpenSearch transport settings do not qualify production TLS or authentication.
+CI provisions PostgreSQL 16, MySQL 8.4, MariaDB 11.4 and OpenSearch 3.2.0 for correctness tests. Optional local integration endpoints are `EDP_TEST_POSTGRES_DSN`, `EDP_TEST_NATIVE_DSN`, `EDP_TEST_SQL_DSN` and `EDP_TEST_SEARCH_URL`. They must refer to isolated test services: the tests create tables/indexes. CI's isolated MySQL/OpenSearch transport settings do not qualify production TLS or authentication.
 
 ## 2. Configure dependencies and identity
 
@@ -130,3 +132,4 @@ Before production, exercise worker kill/restart, control failover/restore, sourc
 ## Reference demo only
 
 `docker compose up --build` explicitly selects the reference app and sample data. For separate local processes, use `EDP_REFERENCE_MODE=true` with `reference_app:app`, a test cursor secret and `VITE_REFERENCE_MODE=true` for the frontend. Never send production traffic to that header-based demo identity path. The production Control Hub build integrates a host-provided OIDC access-token callback described in the migration plan.
+

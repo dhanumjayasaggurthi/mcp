@@ -223,7 +223,19 @@ class SQLAlchemyStructuredBackend(StructuredBackend):
                 raise ValueError("source column does not support JSON paths")
             for part in expr["path"]: col = col[part]
             sample = next((v for v in value if v is not None), None) if isinstance(value, list) else value
-            if type(sample) is bool: col = col.as_boolean()
+            from sqlalchemy import Numeric, cast
+            from sqlalchemy.dialects.postgresql import JSONB
+            source_type = table.c[expr["field"]].type
+            if isinstance(source_type, JSONB):
+                # Heterogeneous JSON must not cause invalid boolean/numeric
+                # casts. CASE also preserves SQL NULL for missing/wrong types.
+                if op == 'exists' or sample is None:
+                    col = col.as_string()
+                else:
+                    expected = 'boolean' if type(sample) is bool else 'number' if type(sample) in {int, float} else 'string'
+                    converted = col.as_boolean() if expected == 'boolean' else cast(col.as_string(), Numeric()) if expected == 'number' else col.as_string()
+                    col = case((func.jsonb_typeof(col) == expected, converted), else_=None)
+            elif type(sample) is bool: col = col.as_boolean()
             elif type(sample) is int: col = col.as_integer()
             elif type(sample) is float: col = col.as_float()
             else: col = col.as_string()

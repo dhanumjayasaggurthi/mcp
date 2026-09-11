@@ -73,3 +73,8 @@ Use the pinned dependency versions in `frontend/package.json`; do not replace
 them with floating `latest` ranges. Generate and commit the lockfile from an
 approved registry before switching CI and release builds to `npm ci`.
 
+
+
+## RDH PostgreSQL onboarding
+
+See [RDH_ONBOARDING.md](RDH_ONBOARDING.md) for native keyword/pgvector retrieval, governed exact-ID lookup, compound filter discovery, source inspection, index plans, request examples and the PostgreSQL-only deployment overlay.

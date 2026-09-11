@@ -1,0 +1,23 @@
+{
+  "source_id": "rdh-postgres",
+  "schema_name": "rimdocs_extracts_core",
+  "object_name": "doc_chunks_clinical",
+  "dataset_id": "rdh.rimdocs.clinical",
+  "display_name": "RimDocs clinical document chunks",
+  "version": "1",
+  "environment": "prod",
+  "template": "postgres_chunks",
+  "postgres": {
+    "chunk_id_field": "chunk_id",
+    "record_id_field": "doc_id",
+    "text_field": "chunk_text",
+    "vector_field": "chunk_vector",
+    "source_version_field": "updated_at",
+    "citation_fields": {
+      "document_name": "file_name",
+      "section": "section_title",
+      "page_start": "page_start",
+      "page_end": "page_end"
+    }
+  }
+}

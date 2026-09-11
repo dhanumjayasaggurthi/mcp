@@ -132,7 +132,7 @@ def _filter_value(row, expr):
         def contains(a, b):
             if isinstance(b, dict): return isinstance(a, dict) and all(k in a and contains(a[k], v) for k, v in b.items())
             if isinstance(b, list): return isinstance(a, list) and all(any(contains(x, v) for x in a) for v in b)
-            return type(a) is type(b) and a == b
+            return a == b and (type(a) is type(b) or type(a) in {int, float} and type(b) in {int, float})
         return contains(actual, value)
     raise ValueError('unsupported filter operation')
 

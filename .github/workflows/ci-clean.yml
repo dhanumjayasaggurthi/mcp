@@ -71,10 +71,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Render base and canary manifests
+      - name: Render base, canary and native PostgreSQL manifests
         run: |
           kubectl kustomize enterprise_delivery/platform_v1/deploy/kubernetes/base > /tmp/edp-base.yaml
           kubectl kustomize enterprise_delivery/platform_v1/deploy/kubernetes/canary > /tmp/edp-canary.yaml
+          kubectl kustomize enterprise_delivery/platform_v1/deploy/kubernetes/postgres-native > /tmp/edp-native.yaml
       - name: Build production image
         run: docker build -t edp-ci enterprise_delivery/platform_v1
       - name: Verify fail-closed startup

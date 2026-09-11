@@ -1,0 +1,15 @@
+{
+  "id": "regassist",
+  "display_name": "RegAssist",
+  "allowed_datasets": [
+    "rdh.rimdocs.clinical"
+  ],
+  "allowed_capabilities": [
+    "query",
+    "keyword",
+    "vector",
+    "retrieve"
+  ],
+  "status": "active",
+  "owner": "REPLACE_WITH_SERVICE_OWNER"
+}
