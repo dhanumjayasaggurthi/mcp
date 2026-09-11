@@ -1,0 +1,46 @@
+{
+  "dataset_id": "rdh.rimdocs.clinical",
+  "dataset_version": "2026.09.1",
+  "index_version": "rdh-clinical-embeddings-v3",
+  "score_kind": "weighted_rrf",
+  "results": [
+    {
+      "record_id": "DOC-EXAMPLE-001",
+      "chunk_id": "chunk-example-001",
+      "score": 0.032522,
+      "text": "Example authorized text describing serious adverse event reporting.",
+      "metadata": {
+        "file_name": "protocol-example.pdf",
+        "section_title": "Safety reporting",
+        "page_start": 12,
+        "page_end": 13
+      },
+      "source": {
+        "dataset": "rdh.rimdocs.clinical",
+        "dataset_version": "2026.09.1",
+        "record_id": "DOC-EXAMPLE-001",
+        "chunk_id": "chunk-example-001",
+        "source_version": "2026-09-10T14:22:00+00:00",
+        "citations": {
+          "document_name": "protocol-example.pdf",
+          "section": "Safety reporting",
+          "page_start": 12,
+          "page_end": 13
+        }
+      },
+      "scores": {
+        "keyword": 0.0842,
+        "vector": 0.9011,
+        "rrf_keyword": 0.016393,
+        "rrf_vector": 0.016129,
+        "hybrid": 0.032522
+      },
+      "ranks": {
+        "keyword": 1,
+        "vector": 2
+      }
+    }
+  ],
+  "trace_id": "01JEXAMPLERETRIEVE0000000000",
+  "next_cursor": null
+}

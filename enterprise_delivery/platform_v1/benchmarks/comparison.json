@@ -1,0 +1,78 @@
+{
+  "method": "median of three paired trials",
+  "actual_rows": 1000000,
+  "results": [
+    {
+      "concurrency": 1,
+      "baseline": {
+        "throughput_rps": 1330.1998554341685,
+        "p50_ms": 0.634033999631356,
+        "p95_ms": 1.0269650001646369,
+        "p99_ms": 2.202603999649,
+        "cpu_seconds": 0.09161060199999999,
+        "max_rss_kib": 42452,
+        "errors": 0,
+        "timeouts": 0
+      },
+      "new": {
+        "throughput_rps": 990.8846293500978,
+        "p50_ms": 0.7828179996067774,
+        "p95_ms": 1.0102810001626494,
+        "p99_ms": 1.3025899997956003,
+        "cpu_seconds": 0.122407402,
+        "max_rss_kib": 45600,
+        "errors": 0,
+        "timeouts": 0
+      },
+      "throughput_change_percent": -25.508589908342792
+    },
+    {
+      "concurrency": 4,
+      "baseline": {
+        "throughput_rps": 496.4121275701615,
+        "p50_ms": 8.119993999571307,
+        "p95_ms": 13.929933000326855,
+        "p99_ms": 15.652835999389936,
+        "cpu_seconds": 0.30617184599999997,
+        "max_rss_kib": 42916,
+        "errors": 0,
+        "timeouts": 0
+      },
+      "new": {
+        "throughput_rps": 498.5440540211291,
+        "p50_ms": 7.30167799974879,
+        "p95_ms": 15.309735000300861,
+        "p99_ms": 19.28206700085866,
+        "cpu_seconds": 0.305705807,
+        "max_rss_kib": 46152,
+        "errors": 0,
+        "timeouts": 0
+      },
+      "throughput_change_percent": 0.42946703607000813
+    },
+    {
+      "concurrency": 16,
+      "baseline": {
+        "throughput_rps": 193.10620192596295,
+        "p50_ms": 44.12620499988407,
+        "p95_ms": 606.803745000434,
+        "p99_ms": 610.2325600004406,
+        "cpu_seconds": 0.9296801149999999,
+        "max_rss_kib": 44244,
+        "errors": 0,
+        "timeouts": 0
+      },
+      "new": {
+        "throughput_rps": 245.5618672636132,
+        "p50_ms": 35.41899699939677,
+        "p95_ms": 444.3803829999524,
+        "p99_ms": 472.3051069995563,
+        "cpu_seconds": 0.7134155539999999,
+        "max_rss_kib": 47432,
+        "errors": 0,
+        "timeouts": 0
+      },
+      "throughput_change_percent": 27.164153618308838
+    }
+  ]
+}

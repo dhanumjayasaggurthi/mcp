@@ -1,0 +1,10 @@
+{
+  "select": ["id", "chat_id", "role", "summary", "created_at"],
+  "filter": {"and": [
+    {"field": "chat_id", "op": "eq", "value": "REPLACE_WITH_AUTHORIZED_CHAT_ID"},
+    {"field": "role", "op": "eq", "value": "assistant"},
+    {"field": "created_at", "op": "gte", "value": "2026-01-01T00:00:00+00:00"}
+  ]},
+  "order_by": [{"field": "id", "direction": "asc"}],
+  "limit": 50
+}

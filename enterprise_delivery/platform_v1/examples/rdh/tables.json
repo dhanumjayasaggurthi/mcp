@@ -1,0 +1,8 @@
+{
+  "description": "Objects visible in supplied schema examples. Inspect each physical table before registration; this file grants no access.",
+  "rimdocs_extracts_core": ["doc_chunks_clinical", "doc_chunks_labelling", "doc_chunks_literature", "doc_chunks_non_clinical", "doc_chunks_quality", "doc_chunks_regulatory", "doc_chunks_safety", "ingestion_log_clinical", "ingestion_log_labelling", "ingestion_log_literature", "ingestion_log_non_clinical", "ingestion_log_quality", "ingestion_log_regulatory", "ingestion_log_safety"],
+  "epod_extracts_core": ["doc_chunks", "doc_chunks_ind", "ingestion_log", "ingestion_log_ind", "ingestion_log_bla"],
+  "subx_2_0": ["ingestion_log_subx_2_0"],
+  "ai_assistant": ["messages"],
+  "epod": ["file_data", "folder_progress"]
+}

@@ -1,0 +1,11 @@
+{
+  "id": "regassist-clinical-read",
+  "effect": "allow",
+  "dataset_patterns": ["rdh.rimdocs.clinical"],
+  "operations": ["query", "keyword", "vector", "retrieve"],
+  "client_ids": ["regassist"],
+  "groups": ["REPLACE_WITH_AUTHORIZED_RDH_READER_GROUP"],
+  "allowed_fields": ["chunk_id", "doc_id", "file_name", "chunk_index", "chunk_total", "chunk_level", "section_title", "page_start", "page_end", "content_types", "chunk_text", "updated_at"],
+  "max_limit": 200,
+  "max_top_k": 50
+}

@@ -96,7 +96,7 @@ class PolicyEngine:
 
         matching = [
             p
-            for p in self._policies.values()
+            for p in self.list()
             if p.enabled
             and _resource_matches(p, product.id, operation)
             and _principal_matches(p, principal)
@@ -126,6 +126,13 @@ class PolicyEngine:
         limits: List[int] = []
         top_ks: List[int] = []
 
+        # A tenant-scoped product never becomes global because a policy author
+        # forgot to repeat require_tenant_isolation on one grant.
+        if product.tenant_field:
+            if not principal.tenant:
+                return PolicyDecision(allowed=False, reason="tenant identity is required")
+            tenant_constraints.append({"field": product.tenant_field, "op": "eq", "value": principal.tenant})
+
         for policy in allows:
             granted_fields |= selectable if policy.allowed_fields is None else (selectable & policy.allowed_fields)
             denied_fields |= policy.denied_fields
@@ -152,6 +159,14 @@ class PolicyEngine:
                     {"field": product.tenant_field, "op": "eq", "value": principal.tenant}
                 )
 
+        # A single row predicate cannot express field grants conditional on rows.
+        # Intersect fields for heterogeneous row scopes to avoid a field/row
+        # cross-product privilege escalation. A future per-cell PDP may widen it.
+        import json
+        scopes = {json.dumps(p.mandatory_filter, sort_keys=True) for p in allows}
+        if len(scopes) > 1:
+            for policy in allows:
+                granted_fields &= selectable if policy.allowed_fields is None else policy.allowed_fields
         granted_fields -= denied_fields
         if not granted_fields:
             return PolicyDecision(
@@ -162,9 +177,19 @@ class PolicyEngine:
 
         # Multiple allow grants are additive, so their row scopes are ORed. Hard
         # tenant isolation constraints remain ANDed with that grant scope.
-        grant_filter = or_filters(*row_grants)
-        tenant_filter = and_filters(*tenant_constraints)
-        mandatory_filter = and_filters(grant_filter, tenant_filter)
+        grant_filter = None if any(not p.mandatory_filter for p in allows) else or_filters(*row_grants)
+        tenant_filter = and_filters(*[dict(t) for i, t in enumerate(tenant_constraints) if t not in tenant_constraints[:i]])
+        source_acls = []
+        if product.retrieval and product.retrieval.backend == 'postgres':
+            mapping = product.retrieval.postgres
+            for field, identities in [(mapping.acl_subjects_field, [principal.subject]),
+                                       (mapping.acl_groups_field, sorted(principal.groups))]:
+                if field:
+                    branches = [{'field': field, 'op': 'exists', 'value': False},
+                                {'field': field, 'op': 'array_is_empty', 'value': True}]
+                    if identities: branches.append({'field': field, 'op': 'array_overlaps', 'value': identities})
+                    source_acls.append({'or': branches})
+        mandatory_filter = and_filters(product.mandatory_filter, grant_filter, tenant_filter, *source_acls)
 
         return PolicyDecision(
             allowed=True,
@@ -176,3 +201,4 @@ class PolicyEngine:
             max_limit=min(product.max_limit, max(limits) if limits else product.max_limit),
             max_top_k=min(product.max_top_k, max(top_ks) if top_ks else product.max_top_k),
         )
+

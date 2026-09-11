@@ -1,0 +1,19 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: edp-boundaries}
+spec:
+  podSelector: {matchLabels: {app: edp}}
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - namespaceSelector: {matchLabels: {edp-gateway: "true"}}
+      ports: [{protocol: TCP, port: 8080}]
+  egress:
+    - to:
+        - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: kube-system}}
+      ports: [{protocol: UDP, port: 53}, {protocol: TCP, port: 53}]
+    - to:
+        - namespaceSelector: {matchLabels: {edp-dependency: "true"}}
+      ports: [{protocol: TCP, port: 443}, {protocol: TCP, port: 5432}, {protocol: TCP, port: 3306}]
+    # Add the exact managed dependency CIDRs or an approved egress gateway in
+    # the environment overlay. There is no universal outbound permission.

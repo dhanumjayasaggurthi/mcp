@@ -1,0 +1,25 @@
+{
+  "query_text": "serious adverse event reporting requirements",
+  "filter": {
+    "and": [
+      {
+        "field": "page_start",
+        "op": "between",
+        "value": [
+          1,
+          50
+        ]
+      },
+      {
+        "field": "content_types",
+        "op": "array_overlaps",
+        "value": [
+          "text"
+        ]
+      }
+    ]
+  },
+  "top_k": 20,
+  "return_text": true,
+  "return_metadata": true
+}

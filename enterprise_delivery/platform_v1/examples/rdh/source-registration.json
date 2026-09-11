@@ -1,0 +1,12 @@
+{
+  "id": "rdh-postgres",
+  "revision": 0,
+  "kind": "postgres",
+  "secret_ref": "file://rdh-source-dsn",
+  "enabled": true,
+  "pool_size": 8,
+  "pool_timeout_seconds": 2,
+  "statement_timeout_seconds": 15,
+  "max_scan_rows": 1000000,
+  "native_scan_governor": false
+}

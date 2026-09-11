@@ -1,0 +1,14 @@
+{
+  "id": "export-example-001",
+  "dataset_id": "rdh.rimdocs.clinical",
+  "requested_by": "svc-reporting-example",
+  "status": "queued",
+  "created_at": "2026-09-11T12:00:00+00:00",
+  "updated_at": "2026-09-11T12:00:00+00:00",
+  "format": "parquet",
+  "row_count": null,
+  "bytes_written": null,
+  "download_url": null,
+  "expires_at": null,
+  "error": null
+}

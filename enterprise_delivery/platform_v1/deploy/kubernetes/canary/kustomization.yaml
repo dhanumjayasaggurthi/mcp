@@ -1,0 +1,22 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: enterprise-data-platform
+nameSuffix: -canary
+resources: [../base/api]
+patches:
+  - target: {kind: Deployment, name: edp-api}
+    patch: |-
+      - op: replace
+        path: /spec/replicas
+        value: 1
+      - op: add
+        path: /spec/selector/matchLabels/release
+        value: canary
+      - op: replace
+        path: /spec/template/metadata/labels/release
+        value: canary
+  - target: {kind: Service, name: edp-api}
+    patch: |-
+      - op: replace
+        path: /spec/selector/release
+        value: canary

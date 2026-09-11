@@ -1,0 +1,12 @@
+{
+  "Rules": [
+    {
+      "ID": "edp-export-retention-and-abandoned-attempts",
+      "Status": "Enabled",
+      "Filter": {"Prefix": "exports/"},
+      "Expiration": {"Days": 8},
+      "NoncurrentVersionExpiration": {"NoncurrentDays": 1},
+      "AbortIncompleteMultipartUpload": {"DaysAfterInitiation": 1}
+    }
+  ]
+}

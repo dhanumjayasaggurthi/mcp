@@ -945,7 +945,7 @@ def exec_get_rows(
     request: Request,
     api_key: Optional[str] = Query(None, deprecated=True),
     limit: int = Query(DEFAULT_ROW_LIMIT, ge=1, le=MAX_ROW_LIMIT),
-    offset: int = Query(0, ge=0),
+    offset: int = Query(0, ge=0, le=10000),
     search: str = Query(""),
     column: str = Query(""),
     include_total: bool = Query(False),
@@ -956,10 +956,12 @@ def exec_get_rows(
     just that one column instead — no casting the rest, no scanning big
     text/blob columns you don't care about, much faster. Page size is capped
     by the table's configured row_limit (and the hard MAX_ROW_LIMIT); use
-    offset/next_offset to page through the rest — there is no cap on the
-    table as a whole. Exact totals are opt-in via include_total=true because
+    offset/next_offset up to offset 10000. Use governed v1 cursors beyond that
+    migration window. Exact totals are opt-in via include_total=true because
     COUNT(*) can be expensive on very large sources. Prefer Bearer authentication; query-string keys are
     accepted only for compatibility during migration."""
+    if int(offset) > 10000:
+        raise HTTPException(status_code=400, detail="Legacy offset exceeds 10000; migrate to the governed cursor API.")
     started = time.monotonic()
     with _db() as conn:
         row = _authorize_key(conn, api_id, api_key, request=request, endpoint="rows", alias=alias)
@@ -969,8 +971,7 @@ def exec_get_rows(
         if not t:
             _log_request(row["id"], "rows", alias=alias, request=request, status=404, mark_used=False)
             raise HTTPException(status_code=404, detail=f"No table with alias '{alias}' on this API.")
-        # This cap is per page, not per table — call again with a higher
-        # `offset` to walk the rest. There's no limit on the table as a whole.
+        # Compatibility offsets are bounded; large scans use v1 cursors.
         capped_limit = min(int(limit), t["row_limit"], MAX_ROW_LIMIT)
         offset = max(int(offset), 0)
         search = (search or "").strip()

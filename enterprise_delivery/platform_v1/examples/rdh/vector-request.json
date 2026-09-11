@@ -1,0 +1,10 @@
+{
+  "query_text": "clinical safety reporting obligations",
+  "filter": {"and": [
+    {"field": "doc_id", "op": "in", "value": ["DOC-001", "DOC-002"]},
+    {"field": "page_start", "op": "lte", "value": 20}
+  ]},
+  "top_k": 20,
+  "return_text": true,
+  "return_metadata": true
+}

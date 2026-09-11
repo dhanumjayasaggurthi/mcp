@@ -1,0 +1,24 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: edp-migrate-v1
+  namespace: enterprise-data-platform
+spec:
+  backoffLimit: 1
+  activeDeadlineSeconds: 300
+  template:
+    spec:
+      restartPolicy: Never
+      automountServiceAccountToken: false
+      securityContext: {runAsNonRoot: true, runAsUser: 10001, runAsGroup: 10001, fsGroup: 10001, seccompProfile: {type: RuntimeDefault}}
+      containers:
+        - name: migration
+          image: edp-runtime:REPLACE_WITH_IMMUTABLE_TAG
+          command: [python, -m, enterprise_data_platform.workers, migrate]
+          envFrom: [{configMapRef: {name: edp-config}}]
+          resources: {requests: {cpu: 100m, memory: 128Mi}, limits: {cpu: "1", memory: 256Mi}}
+          securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: {drop: [ALL]}}
+          volumeMounts: [{name: secrets, mountPath: /run/secrets/edp, readOnly: true}]
+      volumes:
+        - name: secrets
+          secret: {secretName: edp-migration-secrets, defaultMode: 0440}

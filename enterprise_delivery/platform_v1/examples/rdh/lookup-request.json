@@ -1,0 +1,7 @@
+{
+  "id_field": "doc_id",
+  "ids": ["REPLACE_WITH_ACTUAL_DOC_ID"],
+  "select": ["chunk_id", "doc_id", "chunk_index", "chunk_text", "file_name", "section_title", "page_start", "page_end"],
+  "order_by": [{"field": "chunk_index", "direction": "asc"}],
+  "limit": 100
+}

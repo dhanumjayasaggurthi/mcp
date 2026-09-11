@@ -3,7 +3,8 @@ from __future__ import annotations
 import hashlib
 import json
 import threading
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from typing import Any, Dict, Iterable, List, Optional, Protocol, Sequence
 
 from .backends import EmbeddingProvider
@@ -17,6 +18,7 @@ class ChangeEvent:
     record_id: str
     source_version: str
     values: Dict[str, Any]
+    acl: Dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -28,6 +30,10 @@ class CanonicalChunk:
     metadata: Dict[str, Any]
     content_hash: str
     source_version: str
+    dataset_id: str = ''
+    dataset_version: str = ''
+    ingestion_timestamp: str = ''
+    acl: Dict[str, Any] = field(default_factory=dict)
 
 
 class KeywordIndexSink(Protocol):
@@ -124,7 +130,11 @@ def canonical_chunks(product: DataProduct, event: ChangeEvent) -> List[Canonical
     chunks: List[CanonicalChunk] = []
     for ordinal, piece in enumerate(pieces):
         digest = hashlib.sha256(piece.encode("utf-8")).hexdigest()
-        chunk_id = f"{event.record_id}:{ordinal}:{digest[:16]}"
+        # Namespace identities by tenant, product and schema version. Identical
+        # content within a record keeps its ID when only source time changes.
+        identity = [product.id, product.version, event.values.get(product.tenant_field) if product.tenant_field else None,
+            event.record_id, ordinal, digest]
+        chunk_id = hashlib.sha256(json.dumps(identity, separators=(',', ':')).encode()).hexdigest()
         chunks.append(
             CanonicalChunk(
                 record_id=event.record_id,
@@ -134,6 +144,10 @@ def canonical_chunks(product: DataProduct, event: ChangeEvent) -> List[Canonical
                 metadata=dict(metadata),
                 content_hash=digest,
                 source_version=event.source_version,
+                dataset_id=product.id,
+                dataset_version=product.version,
+                ingestion_timestamp=datetime.now(timezone.utc).isoformat(),
+                acl=event.acl,
             )
         )
     return chunks
@@ -168,7 +182,8 @@ class IndexingPipeline:
         counts = {"processed": 0, "skipped": 0, "deleted": 0, "chunks": 0}
         profile = product.retrieval.vector
         for event in events:
-            if self.checkpoints.seen(product.id, event.event_id):
+            checkpoint_scope = product.id + ':' + target_index_version
+            if self.checkpoints.seen(checkpoint_scope, event.event_id):
                 counts["skipped"] += 1
                 continue
             if event.operation == "delete":
@@ -178,7 +193,7 @@ class IndexingPipeline:
                 counts["deleted"] += 1
             elif event.operation == "upsert":
                 chunks = canonical_chunks(product, event)
-                vectors = [self.embedder.embed(c.text, profile_id=profile.profile_id, dimensions=profile.dimensions) for c in chunks]
+                vectors = self.embedder.embed_batch([c.text for c in chunks], profile_id=profile.profile_id, dimensions=profile.dimensions)
                 # Write the canonical clear text before indexes. If an index write
                 # later fails, the event is not checkpointed and is safely retried.
                 self.chunk_sink.upsert(dataset_id=product.id, index_version=target_index_version, chunks=chunks)
@@ -187,6 +202,6 @@ class IndexingPipeline:
                 counts["chunks"] += len(chunks)
             else:
                 raise ValueError(f"unsupported change operation '{event.operation}'")
-            self.checkpoints.mark(product.id, event.event_id)
+            self.checkpoints.mark(checkpoint_scope, event.event_id)
             counts["processed"] += 1
         return counts

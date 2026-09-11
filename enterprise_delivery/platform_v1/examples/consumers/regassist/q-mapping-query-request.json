@@ -1,0 +1,12 @@
+{
+  "select": [
+    "haq_id",
+    "rdh_doc_id"
+  ],
+  "filter": {
+    "field": "haq_id",
+    "op": "eq",
+    "value": "HAQ-EXAMPLE-001"
+  },
+  "limit": 10
+}

@@ -36,6 +36,8 @@ def rrf_fuse(
                 existing.metadata = {**source_hit.metadata, **existing.metadata}
                 existing.source = {**source_hit.source, **existing.source}
                 existing.scores.update(source_hit.scores)
+                existing.ranks.update(source_hit.ranks)
+            merged[key].ranks.setdefault(label, rank)
             contribution = weight / (k + rank)
             fusion[key] = fusion.get(key, 0.0) + contribution
             merged[key].scores[f"rrf_{label}"] = contribution
@@ -50,3 +52,4 @@ def rrf_fuse(
         output.append(hit)
     output.sort(key=lambda h: (-h.score, h.record_id, h.chunk_id or ""))
     return output[:top_k]
+

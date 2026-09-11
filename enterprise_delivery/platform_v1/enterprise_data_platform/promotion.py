@@ -20,6 +20,14 @@ class RetrievalQualityEvidence:
     p95_latency_ms: float
     error_rate: float
 
+    def __post_init__(self):
+        import math
+        if self.evaluated_queries < 0 or any(not math.isfinite(v) or not 0 <= v <= 1 for v in
+            [self.recall_at_k, self.precision_at_k, self.citation_coverage, self.error_rate]):
+            raise ValueError('invalid retrieval quality evidence')
+        if not math.isfinite(self.p95_latency_ms) or self.p95_latency_ms < 0:
+            raise ValueError('invalid latency evidence')
+
 
 @dataclass(frozen=True)
 class PromotionThresholds:
@@ -96,3 +104,4 @@ class IndexPromotionController:
     def rollback_canary(self, deployment: IndexDeployment) -> IndexDeployment:
         # Alias routing goes back to the unchanged active version immediately.
         return deployment.model_copy(update={"state": "validating" if deployment.candidate_version else "healthy", "traffic_to_candidate_percent": 0})
+

@@ -3,6 +3,9 @@ from __future__ import annotations
 from typing import Callable
 
 from fastapi import Depends, FastAPI, HTTPException, Request, Response, status
+from fastapi.exceptions import RequestValidationError
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from .catalog import CatalogConflict, CatalogNotFound, CatalogStore
 from .control_models import AgentRegistration, ClientRegistration, ControlOverview, GuardrailRule, IndexDeployment, ManagedStatus
@@ -10,10 +13,13 @@ from .control_state import ControlState, ResourceNotFound
 from .cursor import CursorError
 from .models import (
     AccessPolicy,
+    ErrorResponse,
+    LookupRequest,
     ExportJob,
     ExportRequest,
     Principal,
     RetrievalResponse,
+    RetrievalContractResponse,
     RetrieveRequest,
     SearchRequest,
     StructuredQueryRequest,
@@ -23,6 +29,7 @@ from .models import (
 from .policy import PolicyEngine
 from .query_validation import QueryValidationError
 from .services import AccessDenied, CapabilityUnavailable, PlatformService
+from .aggregation import AggregateRequest
 from .promotion import IndexPromotionController, RetrievalQualityEvidence, PromotionBlocked
 from .operations import InMemoryOperationsProvider, OperationsProvider
 
@@ -40,6 +47,7 @@ def create_app(
     control_admin_check: ControlAdminCheck,
     promotion_controller: IndexPromotionController | None = None,
     operations_provider: OperationsProvider | None = None,
+    readiness_check=None,
 ) -> FastAPI:
     """Create the v1 API application.
 
@@ -48,15 +56,68 @@ def create_app(
     gateway or via a resolver supplied by the host application.
     """
 
-    app = FastAPI(title="Enterprise Governed Data Retrieval API", version="1.0.0")
+    error_responses = {
+        code: {"model": ErrorResponse, "description": description}
+        for code, description in {
+            400: "Invalid request semantics",
+            401: "Missing or invalid identity",
+            403: "Operation is not authorized",
+            404: "Dataset or resource not found",
+            409: "Version or idempotency conflict",
+            413: "Request body exceeds the configured budget",
+            422: "Request does not match the JSON schema",
+            429: "Capacity or rate limit reached",
+            503: "A required backend is unavailable",
+            504: "Request deadline exceeded",
+        }.items()
+    }
+    app = FastAPI(
+        title="Enterprise Governed Data Retrieval API",
+        version="1.0.0",
+        description="Governed structured and retrieval APIs for registered RDH data products.",
+        responses=error_responses,
+    )
+    bearer_scheme = HTTPBearer(
+        auto_error=False,
+        description="Environment-issued OAuth 2.0 bearer access token.",
+    )
     promotion_controller = promotion_controller or IndexPromotionController()
     operations_provider = operations_provider or InMemoryOperationsProvider()
 
-    def principal_dep(request: Request) -> Principal:
-        return principal_resolver(request)
+    @app.exception_handler(StarletteHTTPException)
+    async def http_error_handler(_: Request, exc: StarletteHTTPException):
+        result = _json_error(exc.status_code, exc.detail)
+        if exc.headers:
+            result.headers.update(exc.headers)
+        return result
+
+    @app.exception_handler(RequestValidationError)
+    async def validation_error_handler(_: Request, exc: RequestValidationError):
+        # Preserve the 422 contract without reflecting submitted values or bodies.
+        return _json_error(422, 'request validation failed')
+
+    async def principal_dep(
+        request: Request,
+        _: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
+    ) -> Principal:
+        from starlette.concurrency import run_in_threadpool
+        from .context import current_actor
+        try:
+            principal = await run_in_threadpool(principal_resolver, request)
+        except HTTPException:
+            if hasattr(service, 'store'):
+                await run_in_threadpool(service.store.audit, 'authentication.deny', 'api')
+            raise
+        current_actor.set({'subject': principal.subject, 'client_id': principal.client_id,
+            'tenant': principal.tenant, 'agent_id': principal.agent_id, 'groups': sorted(principal.groups)})
+        if hasattr(service, 'store'):
+            await run_in_threadpool(service.store.audit, 'authentication.allow', 'api')
+        return principal
 
     def admin_dep(principal: Principal = Depends(principal_dep)) -> Principal:
         if not control_admin_check(principal):
+            if hasattr(service, 'store'):
+                service.store.audit('administration.deny', 'control')
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="control hub administrator permission required")
         return principal
 
@@ -91,9 +152,58 @@ def create_app(
     async def promotion_blocked_handler(_: Request, exc: PromotionBlocked):
         return _json_error(status.HTTP_409_CONFLICT, str(exc))
 
+    from .guardrails import GuardrailViolation
+    from .governor import Overloaded
+    from .resilience import BackendUnavailable
+    from .jobs import LeaseLost
+    from sqlalchemy.exc import SQLAlchemyError
+    from .observability import RequestBoundary
+    app.add_middleware(RequestBoundary)
+    app.add_exception_handler(GuardrailViolation, access_denied_handler)
+
+    @app.exception_handler(Overloaded)
+    async def overload_handler(request, exc):
+        result = _json_error(429, str(exc))
+        result.headers['Retry-After'] = '1'
+        result.headers['RateLimit-Remaining'] = '0'
+        return result
+
+    async def unavailable_handler(request, exc):
+        return _json_error(503, 'a required backend is unavailable')
+    app.add_exception_handler(SQLAlchemyError, unavailable_handler)
+    app.add_exception_handler(BackendUnavailable, unavailable_handler)
+    app.add_exception_handler(LeaseLost, conflict_handler)
+
+    @app.exception_handler(TimeoutError)
+    async def timeout_handler(request, exc):
+        return _json_error(504, 'request deadline exceeded')
+
+    @app.get('/livez')
+    def live():
+        return {'status': 'alive'}
+
+    @app.get('/readyz')
+    def ready():
+        if readiness_check and not readiness_check():
+            return _json_error(503, 'control store is not ready')
+        return {'status': 'ready'}
+
+    def visible_decision(principal, product, capability):
+        from .models import PolicyDecision
+        try:
+            return service._decision(principal, product.id, capability)[1]
+        except AccessDenied:
+            return PolicyDecision(allowed=False, reason='not authorized')
+
     @app.get("/v1/health")
     def health():
+        if readiness_check and not readiness_check():
+            raise HTTPException(status_code=503, detail='control plane is not ready')
         return {"status": "healthy", "api_version": "v1"}
+
+    @app.post('/v1/datasets/{dataset_id}/aggregate', response_model=StructuredQueryResponse)
+    def aggregate(dataset_id: str, body: AggregateRequest, principal: Principal = Depends(principal_dep)):
+        return service.aggregate(principal, dataset_id, body)
 
     @app.get("/v1/datasets")
     def list_datasets(principal: Principal = Depends(principal_dep)):
@@ -103,7 +213,7 @@ def create_app(
             # if the principal has any matching allow policy for discover or one
             # of its enabled data capabilities.
             for capability in product.capabilities:
-                decision = policies.evaluate(principal=principal, product=product, operation=capability)
+                decision = visible_decision(principal, product, capability)
                 if decision.allowed:
                     visible.append(
                         {
@@ -123,7 +233,7 @@ def create_app(
         product = catalog.get(dataset_id)
         # Use QUERY as the discovery authorization fallback; if unavailable, any
         # enabled retrieval capability can authorize schema visibility.
-        decisions = [policies.evaluate(principal=principal, product=product, operation=c) for c in product.capabilities]
+        decisions = [visible_decision(principal, product, c) for c in product.capabilities]
         allowed = [d for d in decisions if d.allowed]
         if not allowed:
             raise AccessDenied("schema access denied")
@@ -131,7 +241,7 @@ def create_app(
         return {
             "dataset_id": product.id,
             "version": product.version,
-            "identity_fields": product.identity_fields,
+            "identity_fields": [f for f in product.identity_fields if f in fields],
             "fields": [f.model_dump() for f in product.fields if f.name in fields],
         }
 
@@ -140,10 +250,113 @@ def create_app(
         product = catalog.get(dataset_id)
         enabled = []
         for capability in product.capabilities:
-            decision = policies.evaluate(principal=principal, product=product, operation=capability)
+            decision = visible_decision(principal, product, capability)
             if decision.allowed:
                 enabled.append(capability.value)
         return {"dataset_id": dataset_id, "capabilities": sorted(enabled)}
+
+    @app.get(
+        "/v1/datasets/{dataset_id}/retrieval-contract",
+        response_model=RetrievalContractResponse,
+    )
+    def retrieval_contract(dataset_id: str, principal: Principal = Depends(principal_dep)):
+        """Return the caller-specific, safe contract required by retrieval clients."""
+        from .chunks import retrieval_version
+        from .models import Capability
+
+        product = catalog.get(dataset_id)
+        endpoints = {
+            Capability.KEYWORD: f"/v1/datasets/{dataset_id}/search/keyword",
+            Capability.VECTOR: f"/v1/datasets/{dataset_id}/search/vector",
+            Capability.HYBRID: f"/v1/datasets/{dataset_id}/search/hybrid",
+            Capability.RETRIEVE: f"/v1/datasets/{dataset_id}/retrieve",
+        }
+        operations = {}
+        decisions = {}
+        for capability, endpoint in endpoints.items():
+            if capability not in product.capabilities:
+                continue
+            decision = visible_decision(principal, product, capability)
+            if not decision.allowed:
+                continue
+            decisions[capability] = decision
+            citation_labels = []
+            if product.retrieval and product.retrieval.backend == "postgres" and product.retrieval.postgres:
+                citation_labels = sorted(
+                    label
+                    for label, field in product.retrieval.postgres.citation_fields.items()
+                    if field in decision.allowed_fields - decision.masked_fields
+                )
+            operations[capability.value] = {
+                "endpoint": endpoint,
+                "oauth_scope": f"edp:{capability.value}",
+                "max_top_k": decision.max_top_k,
+                "filters_url": f"/v1/datasets/{dataset_id}/filters?operation={capability.value}",
+                "citation_labels": citation_labels,
+            }
+        if not operations:
+            raise AccessDenied("retrieval contract access denied")
+
+        vector = None
+        retrieval = product.retrieval
+        # Direct embedding inputs belong to the vector-search contract. Hybrid
+        # and retrieve accept query strings and keep their embedding details
+        # server-side.
+        vector_visible = Capability.VECTOR in decisions
+        if vector_visible and retrieval and retrieval.vector:
+            embedder_models = getattr(service.embedder, "models", None)
+            query_text_supported = service.embedder is not None and (
+                embedder_models is None
+                or retrieval.vector.profile_id in embedder_models
+            )
+            vector = {
+                "profile_id": retrieval.vector.profile_id,
+                "dimensions": retrieval.vector.dimensions,
+                "distance": retrieval.vector.distance,
+                "accepted_inputs": ["vector"] + (["query_text"] if query_text_supported else []),
+                "query_text_supported": query_text_supported,
+            }
+        return {
+            "dataset_id": product.id,
+            "dataset_version": product.version,
+            "index_version": retrieval_version(product),
+            "operations": operations,
+            "vector": vector,
+            "result_identity": ["record_id", "chunk_id"],
+            "pagination": "bounded_top_k",
+            "scores": {
+                "route_local": True,
+                "comparable_across_modes": False,
+                "score_kind_reported_per_response": True,
+                "ranks_reported_per_mode": True,
+            },
+        }
+
+    @app.get("/v1/datasets/{dataset_id}/filters")
+    def filters(dataset_id: str, operation: str = "query", principal: Principal = Depends(principal_dep)):
+        from .models import Capability
+        from .filter_contract import filter_contract
+        if operation not in {"query", "keyword", "vector", "hybrid", "retrieve"}:
+            raise ValueError("invalid filter operation")
+        product, decision = service._decision(principal, dataset_id, Capability(operation))
+        return filter_contract(product, decision, operation)
+
+    @app.post("/v1/datasets/{dataset_id}/records/lookup", response_model=StructuredQueryResponse)
+    def lookup(dataset_id: str, body: LookupRequest, principal: Principal = Depends(principal_dep)):
+        from .models import Capability
+        from .policy import and_filters
+        product, _ = service._decision(principal, dataset_id, Capability.QUERY)
+        field = body.id_field
+        if field is None:
+            if product.retrieval and product.retrieval.backend == "postgres":
+                field = product.retrieval.postgres.record_id_field
+            elif len(product.identity_fields) == 1:
+                field = product.identity_fields[0]
+            else:
+                raise ValueError("choose id_field or use /query for composite identities")
+        return service.query(principal, dataset_id, StructuredQueryRequest(
+            select=body.select, filter=and_filters(body.filter, {"field": field, "op": "in", "value": body.ids}),
+            order_by=body.order_by, limit=body.limit, cursor=body.cursor))
 
     @app.post("/v1/datasets/{dataset_id}/query", response_model=StructuredQueryResponse)
     def query(dataset_id: str, body: StructuredQueryRequest, principal: Principal = Depends(principal_dep)):
@@ -203,6 +416,8 @@ def create_app(
         from .models import DataProduct
 
         product = DataProduct.model_validate({**body, "id": dataset_id})
+        if getattr(app.state, "dataset_validator", None):
+            app.state.dataset_validator(product)
         saved = catalog.put(product, expected_version=expected_version)
         response.headers["ETag"] = saved.version
         return saved.model_dump(mode="json")
@@ -211,15 +426,22 @@ def create_app(
     def list_policies(_: Principal = Depends(admin_dep)):
         return {"policies": [p.model_dump(mode="json") for p in policies.list()]}
 
+    @app.delete('/v1/control/datasets/{dataset_id}', status_code=204)
+    def delete_dataset(dataset_id: str, expected_version: str | None = None, _: Principal = Depends(admin_dep)):
+        catalog.delete(dataset_id, expected_version=expected_version)
+
     @app.put("/v1/control/policies/{policy_id}")
     def put_policy(policy_id: str, body: dict, _: Principal = Depends(admin_dep)):
         policy = AccessPolicy.model_validate({**body, "id": policy_id})
-        policies.put(policy)
-        return policy.model_dump(mode="json")
+        saved = policies.put(policy) or policy
+        return saved.model_dump(mode="json")
 
     @app.delete("/v1/control/policies/{policy_id}", status_code=status.HTTP_204_NO_CONTENT)
-    def delete_policy(policy_id: str, _: Principal = Depends(admin_dep)):
-        policies.delete(policy_id)
+    def delete_policy(policy_id: str, expected_revision: int | None = None, _: Principal = Depends(admin_dep)):
+        if hasattr(policies, 'registry'):
+            policies.delete(policy_id, expected_revision=expected_revision)
+        else:
+            policies.delete(policy_id)
 
     _register_registry_routes(app, "clients", control_state.clients, ClientRegistration, admin_dep)
     _register_registry_routes(app, "agents", control_state.agents, AgentRegistration, admin_dep)
@@ -228,6 +450,8 @@ def create_app(
 
     @app.post("/v1/control/indexes/{index_id}/validate")
     def validate_index(index_id: str, body: dict, _: Principal = Depends(admin_dep)):
+        if hasattr(promotion_controller, 'transition'):
+            return promotion_controller.transition(index_id, 'validate', body).model_dump(mode='json')
         deployment = control_state.indexes.get(index_id)
         evidence = RetrievalQualityEvidence(**body)
         updated = promotion_controller.validate_candidate(deployment, evidence)
@@ -235,22 +459,43 @@ def create_app(
 
     @app.post("/v1/control/indexes/{index_id}/canary")
     def canary_index(index_id: str, body: dict, _: Principal = Depends(admin_dep)):
+        if hasattr(promotion_controller, 'transition'):
+            return promotion_controller.transition(index_id, 'canary', body).model_dump(mode='json')
         deployment = control_state.indexes.get(index_id)
         updated = promotion_controller.set_canary(deployment, int(body.get("percent", -1)))
         return control_state.indexes.put(updated).model_dump(mode="json")
 
     @app.post("/v1/control/indexes/{index_id}/promote")
     def promote_index(index_id: str, _: Principal = Depends(admin_dep)):
+        if hasattr(promotion_controller, 'transition'):
+            return promotion_controller.transition(index_id, 'promote', {}).model_dump(mode='json')
         deployment = control_state.indexes.get(index_id)
         updated = promotion_controller.promote(deployment)
         return control_state.indexes.put(updated).model_dump(mode="json")
 
     @app.post("/v1/control/indexes/{index_id}/rollback-canary")
     def rollback_index(index_id: str, _: Principal = Depends(admin_dep)):
+        if hasattr(promotion_controller, 'transition'):
+            return promotion_controller.transition(index_id, 'rollback-canary', {}).model_dump(mode='json')
         deployment = control_state.indexes.get(index_id)
         updated = promotion_controller.rollback_canary(deployment)
         return control_state.indexes.put(updated).model_dump(mode="json")
 
+    if service.exporter and hasattr(service.exporter, 'get_for'):
+        @app.get('/v1/exports/{job_id}')
+        def export_status(job_id: str, principal: Principal = Depends(principal_dep)):
+            return service.exporter.get_for(principal, job_id)
+
+        @app.delete('/v1/exports/{job_id}')
+        def cancel_export(job_id: str, principal: Principal = Depends(principal_dep)):
+            return service.exporter.cancel_for(principal, job_id)
+
+        @app.get('/v1/exports/{job_id}/download')
+        def download_export(job_id: str, principal: Principal = Depends(principal_dep)):
+            return service.exporter.download(principal, job_id, service)
+
+    app.state.admin_dependency = admin_dep
+    app.state.principal_dependency = principal_dep
     return app
 
 
@@ -271,8 +516,11 @@ def _register_registry_routes(app: FastAPI, name: str, registry, model_cls, admi
     put_item.__name__ = f"put_{name}"
     app.put(item_path)(put_item)
 
-    def delete_item(item_id: str, _: Principal = Depends(admin_dep)):
-        registry.delete(item_id)
+    def delete_item(item_id: str, expected_revision: int | None = None, _: Principal = Depends(admin_dep)):
+        if hasattr(registry, 'store'):
+            registry.delete(item_id, expected_revision=expected_revision)
+        else:
+            registry.delete(item_id)
 
     delete_item.__name__ = f"delete_{name}"
     app.delete(item_path, status_code=status.HTTP_204_NO_CONTENT)(delete_item)
@@ -281,4 +529,5 @@ def _register_registry_routes(app: FastAPI, name: str, registry, model_cls, admi
 def _json_error(status_code: int, detail: str):
     from fastapi.responses import JSONResponse
 
-    return JSONResponse(status_code=status_code, content={"detail": detail})
+    from .context import trace_id
+    return JSONResponse(status_code=status_code, content={'detail': detail, 'code': str(status_code), 'trace_id': trace_id()})

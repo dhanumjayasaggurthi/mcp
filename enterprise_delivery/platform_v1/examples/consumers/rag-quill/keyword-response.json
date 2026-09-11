@@ -1,0 +1,45 @@
+{
+  "dataset_id": "rdh.rimdocs.clinical",
+  "dataset_version": "2026.09.1",
+  "index_version": "rdh-clinical-embeddings-v3",
+  "score_kind": "postgres_ts_rank_cd",
+  "results": [
+    {
+      "record_id": "DOC-EXAMPLE-001",
+      "chunk_id": "chunk-example-001",
+      "score": 0.0842,
+      "text": "Example authorized text describing serious adverse event reporting.",
+      "metadata": {
+        "file_name": "protocol-example.pdf",
+        "section_title": "Safety reporting",
+        "page_start": 12,
+        "page_end": 13,
+        "content_types": [
+          "text"
+        ]
+      },
+      "source": {
+        "dataset": "rdh.rimdocs.clinical",
+        "dataset_version": "2026.09.1",
+        "record_id": "DOC-EXAMPLE-001",
+        "chunk_id": "chunk-example-001",
+        "source_version": "2026-09-10T14:22:00+00:00",
+        "score_kind": "postgres_ts_rank_cd",
+        "citations": {
+          "document_name": "protocol-example.pdf",
+          "section": "Safety reporting",
+          "page_start": 12,
+          "page_end": 13
+        }
+      },
+      "scores": {
+        "keyword": 0.0842
+      },
+      "ranks": {
+        "keyword": 1
+      }
+    }
+  ],
+  "trace_id": "01JEXAMPLEKEYWORD00000000000",
+  "next_cursor": null
+}

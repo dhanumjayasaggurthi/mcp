@@ -1,0 +1,48 @@
+{
+  "label": "baseline",
+  "rows": 1000000,
+  "python": "3.12.13",
+  "source": "SQLite local indexed synthetic table",
+  "scope": "SQL query + policy + second-page keyset; reference catalog/policy only; no distributed claims",
+  "measurements": [
+    {
+      "concurrency": 1,
+      "requests": 120,
+      "throughput_rps": 1330.1998554341685,
+      "p50_ms": 0.6284050004978781,
+      "p95_ms": 0.9304400000473834,
+      "p99_ms": 4.6137680001265835,
+      "cpu_seconds": 0.09161060199999999,
+      "max_rss_kib": 42452,
+      "pool_limit": 8,
+      "errors": 0,
+      "timeouts": 0
+    },
+    {
+      "concurrency": 4,
+      "requests": 120,
+      "throughput_rps": 592.6336057638676,
+      "p50_ms": 4.680324000219116,
+      "p95_ms": 13.929933000326855,
+      "p99_ms": 15.652835999389936,
+      "cpu_seconds": 0.26671227000000003,
+      "max_rss_kib": 42836,
+      "pool_limit": 8,
+      "errors": 0,
+      "timeouts": 0
+    },
+    {
+      "concurrency": 16,
+      "requests": 120,
+      "throughput_rps": 229.61230532455986,
+      "p50_ms": 37.88491199975397,
+      "p95_ms": 462.9883110001174,
+      "p99_ms": 510.49768699976994,
+      "cpu_seconds": 0.776661321,
+      "max_rss_kib": 44244,
+      "pool_limit": 8,
+      "errors": 0,
+      "timeouts": 0
+    }
+  ]
+}

@@ -5,6 +5,9 @@ import hashlib
 import hmac
 import json
 import time
+from datetime import date, datetime
+from decimal import Decimal
+from uuid import UUID
 from dataclasses import dataclass
 from typing import Any, Dict, Mapping, Optional
 
@@ -32,6 +35,20 @@ def _b64e(raw: bytes) -> str:
 def _b64d(text: str) -> bytes:
     padding = "=" * (-len(text) % 4)
     return base64.urlsafe_b64decode((text + padding).encode("ascii"))
+
+
+def _typed(value):
+    for kind, cls in [('datetime', datetime), ('date', date), ('decimal', Decimal), ('uuid', UUID)]:
+        if isinstance(value, cls):
+            return {'__cursor_type': kind, 'value': str(value)}
+    raise TypeError('unsupported cursor value')
+
+
+def _untyped(value):
+    constructors = {'datetime': datetime.fromisoformat, 'date': date.fromisoformat, 'decimal': Decimal, 'uuid': UUID}
+    if set(value) == {'__cursor_type', 'value'} and value['__cursor_type'] in constructors:
+        return constructors[value['__cursor_type']](value['value'])
+    return value
 
 
 @dataclass(frozen=True)
@@ -75,7 +92,7 @@ class CursorCodec:
         }
         if extra:
             payload["extra"] = dict(extra)
-        raw = json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8")
+        raw = json.dumps(payload, separators=(",", ":"), sort_keys=True, default=_typed, allow_nan=False).encode("utf-8")
         body = _b64e(raw)
         sig = _b64e(hmac.new(self.secret, body.encode("ascii"), hashlib.sha256).digest())
         return f"{body}.{sig}"
@@ -88,6 +105,8 @@ class CursorCodec:
         dataset_version: str,
         now: Optional[int] = None,
     ) -> Dict[str, Any]:
+        if len(token) > 32768 or not token.isascii():
+            raise CursorTampered('invalid cursor size or encoding')
         try:
             body, sig = token.split(".", 1)
         except ValueError as exc:
@@ -98,7 +117,9 @@ class CursorCodec:
             raise CursorTampered("cursor signature is invalid")
 
         try:
-            payload = json.loads(_b64d(body))
+            payload = json.loads(_b64d(body), object_hook=_untyped)
+            if not isinstance(payload, dict) or not isinstance(payload.get('position'), dict):
+                raise ValueError('invalid payload')
         except Exception as exc:  # noqa: BLE001 - all decode failures are invalid cursors
             raise CursorTampered("cursor payload is invalid") from exc
 
@@ -111,3 +132,22 @@ class CursorCodec:
         if current >= int(payload.get("exp", 0)):
             raise CursorExpired("cursor has expired")
         return payload
+
+
+class EncryptedCursorCodec(CursorCodec):
+    """Hide internal keyset values (including non-selectable identity fields)."""
+
+    def encode(self, **kwargs):
+        from cryptography.fernet import Fernet
+        fernet = Fernet(base64.urlsafe_b64encode(hashlib.sha256(self.secret).digest()))
+        return fernet.encrypt(super().encode(**kwargs).encode()).decode()
+
+    def decode(self, token, **kwargs):
+        from cryptography.fernet import Fernet, InvalidToken
+        if len(token) > 65536:
+            raise CursorTampered('invalid cursor size')
+        try:
+            raw = Fernet(base64.urlsafe_b64encode(hashlib.sha256(self.secret).digest())).decrypt(token.encode()).decode()
+        except (InvalidToken, ValueError, UnicodeError) as exc:
+            raise CursorTampered('invalid encrypted cursor') from exc
+        return super().decode(raw, **kwargs)

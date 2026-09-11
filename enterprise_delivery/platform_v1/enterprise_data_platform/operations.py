@@ -28,6 +28,7 @@ class InMemoryOperationsProvider:
 
 def reference_operations_snapshot() -> Dict[str, Any]:
     return {
+        "reference_mode": True,
         "environment": "prod", "environments": ["dev", "qa", "prod"], "system_status": "operational",
         "metrics": {
             "active_data_products": {"value": 342, "change": 12}, "healthy_indexes": {"value": "28.4M", "change": 0.6},

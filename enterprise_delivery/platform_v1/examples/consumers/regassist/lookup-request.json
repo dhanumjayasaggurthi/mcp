@@ -1,0 +1,30 @@
+{
+  "id_field": "doc_id",
+  "ids": [
+    "DOC-EXAMPLE-001"
+  ],
+  "select": [
+    "chunk_id",
+    "doc_id",
+    "chunk_index",
+    "chunk_text",
+    "file_name",
+    "section_title",
+    "page_start",
+    "page_end"
+  ],
+  "filter": {
+    "field": "content_types",
+    "op": "array_overlaps",
+    "value": [
+      "text"
+    ]
+  },
+  "order_by": [
+    {
+      "field": "chunk_index",
+      "direction": "asc"
+    }
+  ],
+  "limit": 100
+}

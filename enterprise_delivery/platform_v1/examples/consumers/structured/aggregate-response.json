@@ -1,0 +1,18 @@
+{
+  "rows": [
+    {
+      "chunk_level": "section",
+      "matching_chunks": 128
+    },
+    {
+      "chunk_level": "paragraph",
+      "matching_chunks": 73
+    }
+  ],
+  "next_cursor": null,
+  "count": null,
+  "count_is_estimate": false,
+  "trace_id": "01JEXAMPLEAGGREGATE000000000",
+  "has_more": false,
+  "returned_rows": 2
+}

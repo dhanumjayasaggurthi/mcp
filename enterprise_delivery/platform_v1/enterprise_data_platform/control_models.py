@@ -16,6 +16,7 @@ class ManagedStatus(str, Enum):
 
 class ClientRegistration(BaseModel):
     model_config = ConfigDict(extra="forbid")
+    revision: int = Field(default=0, ge=0)
     id: str = Field(pattern=r"^[a-zA-Z0-9._-]{1,128}$")
     display_name: str
     owner: str
@@ -31,6 +32,7 @@ class ClientRegistration(BaseModel):
 
 class AgentRegistration(BaseModel):
     model_config = ConfigDict(extra="forbid")
+    revision: int = Field(default=0, ge=0)
     id: str = Field(pattern=r"^[a-zA-Z0-9._-]{1,128}$")
     display_name: str
     owner: str
@@ -43,6 +45,7 @@ class AgentRegistration(BaseModel):
     max_top_k: int = Field(default=20, ge=1, le=1000)
     max_context_chars: int = Field(default=100000, ge=1000, le=5_000_000)
     mcp_enabled: bool = False
+    max_tool_calls_per_minute: int = Field(default=60, ge=1, le=10000)
 
 
 class GuardrailAction(str, Enum):
@@ -54,6 +57,7 @@ class GuardrailAction(str, Enum):
 
 class GuardrailRule(BaseModel):
     model_config = ConfigDict(extra="forbid")
+    revision: int = Field(default=0, ge=0)
     id: str = Field(pattern=r"^[a-zA-Z0-9._-]{1,128}$")
     name: str
     enabled: bool = True
@@ -78,6 +82,7 @@ class GuardrailRule(BaseModel):
 
 class IndexDeployment(BaseModel):
     model_config = ConfigDict(extra="forbid")
+    revision: int = Field(default=0, ge=0)
     id: str = Field(pattern=r"^[a-zA-Z0-9._-]{1,128}$")
     dataset_id: str
     index_type: Literal["keyword", "vector"]
@@ -104,3 +109,4 @@ class ControlOverview(BaseModel):
     active_clients: int
     active_agents: int
     control_plane_status: Literal["healthy", "degraded", "down"]
+

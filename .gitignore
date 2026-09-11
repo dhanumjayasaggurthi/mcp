@@ -8,3 +8,8 @@ dist/
 .env.*
 *.db
 .DS_Store
+
+
+**/pytest-of-root/
+**/.hypothesis/
+**/*.egg-info/

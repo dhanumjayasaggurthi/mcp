@@ -1,0 +1,31 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: edp-runtime
+automountServiceAccountToken: false
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: edp-config
+data:
+  EDP_SECRET_DIR: /run/secrets/edp
+  EDP_CONTROL_DSN_REF: file://control-dsn
+  EDP_CONTROL_POOL_SIZE: "10"
+  EDP_CURSOR_SECRET_REF: file://cursor-key
+  EDP_SEARCH_TOKEN_REF: file://search-token
+  EDP_EMBEDDING_TOKEN_REF: file://embedding-token
+  EDP_SEARCH_URL: https://search.example.invalid
+  EDP_EMBEDDING_URL: https://embedding.example.invalid
+  EDP_EMBEDDING_PROFILES: '{"enterprise-v1":"REPLACE_WITH_VERSIONED_MODEL"}'
+  EDP_EXPORT_BUCKET: REPLACE_WITH_PRIVATE_BUCKET
+  EDP_EXPORT_KMS_KEY_ID: REPLACE_WITH_KMS_KEY_ARN
+  EDP_EXPORT_RETENTION_SECONDS: "86400"
+  EDP_OIDC_ISSUER: https://identity.example.invalid
+  EDP_OIDC_AUDIENCE: enterprise-data-platform
+  EDP_OIDC_JWKS_URL: https://identity.example.invalid/.well-known/jwks.json
+  EDP_QUEUE_CAPACITY: "10000"
+  EDP_ENGINE_NAME: Adaptive Governed Execution Engine
+  EDP_RESOURCE_LIMITS: '{"global_concurrency":200,"background_concurrency":40,"source_concurrency":20,"max_seconds":30}'
+  OTEL_SERVICE_NAME: enterprise-data-platform
+  # Configure an HTTPS OTLP/HTTP collector endpoint in the environment overlay.

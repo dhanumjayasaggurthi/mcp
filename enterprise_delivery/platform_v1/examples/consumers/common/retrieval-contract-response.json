@@ -1,0 +1,64 @@
+{
+  "dataset_id": "rdh.rimdocs.clinical",
+  "dataset_version": "2026.09.1",
+  "index_version": "rdh-clinical-embeddings-v3",
+  "operations": {
+    "keyword": {
+      "endpoint": "/v1/datasets/rdh.rimdocs.clinical/search/keyword",
+      "oauth_scope": "edp:keyword",
+      "max_top_k": 50,
+      "filters_url": "/v1/datasets/rdh.rimdocs.clinical/filters?operation=keyword",
+      "citation_labels": [
+        "document_name",
+        "page_end",
+        "page_start",
+        "section"
+      ]
+    },
+    "vector": {
+      "endpoint": "/v1/datasets/rdh.rimdocs.clinical/search/vector",
+      "oauth_scope": "edp:vector",
+      "max_top_k": 50,
+      "filters_url": "/v1/datasets/rdh.rimdocs.clinical/filters?operation=vector",
+      "citation_labels": [
+        "document_name",
+        "page_end",
+        "page_start",
+        "section"
+      ]
+    },
+    "retrieve": {
+      "endpoint": "/v1/datasets/rdh.rimdocs.clinical/retrieve",
+      "oauth_scope": "edp:retrieve",
+      "max_top_k": 20,
+      "filters_url": "/v1/datasets/rdh.rimdocs.clinical/filters?operation=retrieve",
+      "citation_labels": [
+        "document_name",
+        "page_end",
+        "page_start",
+        "section"
+      ]
+    }
+  },
+  "vector": {
+    "profile_id": "rdh-clinical-example-v1",
+    "dimensions": 8,
+    "distance": "cosine",
+    "accepted_inputs": [
+      "vector",
+      "query_text"
+    ],
+    "query_text_supported": true
+  },
+  "result_identity": [
+    "record_id",
+    "chunk_id"
+  ],
+  "pagination": "bounded_top_k",
+  "scores": {
+    "route_local": true,
+    "comparable_across_modes": false,
+    "score_kind_reported_per_response": true,
+    "ranks_reported_per_mode": true
+  }
+}

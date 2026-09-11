@@ -99,17 +99,18 @@ function Overview({ onOpenSection }) {
   if (state.error) return <ErrorCard message={state.error} retry={load} />;
   const d = state.data; const metrics = d.metrics || {};
   const metricLabels = [['active_data_products','Active Data Products','datasets'],['healthy_indexes','Healthy Indexes','indexes'],['policy_violations','Policy Violations','guardrails'],['active_consumers','Active Consumers','clients'],['p95_latency','P95 Latency','monitoring'],['error_rate','Error Rate','monitoring']];
-  const indexRows = state.indexes.length ? state.indexes : [{ index_type:'keyword',state:'healthy',freshness_lag_seconds:720,indexed_records:1800000000,active_version:'—'},{index_type:'vector',state:'healthy',freshness_lag_seconds:1080,indexed_records:1800000000,active_version:'e5-large-v2'}];
+  const indexRows = state.indexes;
   return <div className="dashboard-grid">
-    <div className="metric-grid">{metricLabels.map(([key,label,icon]) => { const m=metrics[key]||{}; const bad=key==='policy_violations'; return <button className="metric-box" key={key} onClick={()=>onOpenSection(icon)}><Icon name={icon}/><div><span>{label}</span><b>{m.value ?? '—'} <small>{m.unit}</small></b><em className={bad?'bad':''}>{Number(m.change)>=0?'▲':'▼'} {Math.abs(Number(m.change||0))}% <i>(vs. last 30 days)</i></em></div></button>})}</div>
+    {d.reference_mode && <p role="status">Reference environment — dashboard figures are sample data.</p>}
+    <div className="metric-grid">{metricLabels.map(([key,label,icon]) => { const m=metrics[key]||{}; const bad=key==='policy_violations'; return <button className="metric-box" key={key} onClick={()=>onOpenSection(icon)}><Icon name={icon}/><div><span>{label}</span><b>{m.value ?? '—'} <small>{m.unit}</small></b>{m.change != null && <em className={bad?'bad':''}>{Number(m.change)>=0?'▲':'▼'} {Math.abs(Number(m.change||0))}% <i>(vs. last 30 days)</i></em>}</div></button>})}</div>
     <div className="top-grid">
-      <Card title="Deployment & Promotion" className="deploy"><div className="versions"><div><span>Current Version</span><b>{d.deployment.current}</b><StatusPill value="active"/></div><div><span>Canary Version</span><b>{d.deployment.candidate}</b><small>{d.deployment.traffic}% traffic</small></div></div><div className="rollout"><strong>Zero-Downtime Rollout</strong><div className="steps"><i>✓<span>Build</span></i><i>✓<span>Test</span></i><i className="current">●<span>Canary</span></i><i>○<span>Ramp</span></i><i>○<span>Complete</span></i></div><div className="rollout-note"><b>✓</b><span>Canary deployment in progress<small>{d.deployment.traffic}% traffic &nbsp;|&nbsp; Healthy &nbsp;|&nbsp; No errors detected</small></span><button onClick={()=>onOpenSection('indexes')}>↶ Rollback</button></div></div></Card>
+      <Card title="Deployment & Promotion" className="deploy"><div className="versions"><div><span>Current Version</span><b>{d.deployment.current}</b><StatusPill value="active"/></div><div><span>Canary Version</span><b>{d.deployment.candidate}</b><small>{d.deployment.traffic}% traffic</small></div></div><div className="rollout"><strong>Deployment status</strong>{d.deployment.stage && <div className="steps"><i>✓<span>Build</span></i><i>✓<span>Test</span></i><i className="current">●<span>Canary</span></i><i>○<span>Ramp</span></i><i>○<span>Complete</span></i></div>}<div className="rollout-note"><b>✓</b><span>{d.deployment.stage ? `Deployment stage: ${d.deployment.stage}` : 'Rollout status is unavailable'}<small>{d.deployment.traffic}% candidate traffic</small></span><button onClick={()=>onOpenSection('indexes')}>↶ Rollback</button></div></div></Card>
       <Card title="Policy Enforcement"><div className="policy-list"><p><Icon name="clients"/><span>Allowed Consumers</span><b>{d.policy.allowed} / {d.policy.total}</b></p><p><Icon name="guardrails"/><span>Masked Fields (PII/PHI)</span><b>{d.policy.masked_fields}<small>Across {d.policy.masked_products} data products</small></b></p><p><Icon name="policies"/><span>Row Filters</span><b>{d.policy.row_filters}<small>Active data filters</small></b></p><p><Icon name="datasets"/><span>Consumer Quotas</span><b>{d.policy.quotas_near_limit} / {d.policy.allowed}<small>Approaching limit</small></b></p></div></Card>
       <Card title="Retrieval Services"><TinyTable columns={[{key:'name',label:'Service'},{key:'status',label:'Status',render:v=><span className="healthy">● &nbsp;{v}</span>},{key:'qps',label:'QPS (current)'},{key:'p95_ms',label:'P95 Latency',render:v=>`${v} ms`}]} rows={d.services}/></Card>
     </div>
     <div className="middle-grid">
       <Card title="Index Health"><TinyTable columns={[{key:'index_type',label:'Index'},{key:'state',label:'Status',render:v=><span className="healthy">● &nbsp;{v}</span>},{key:'freshness_lag_seconds',label:'Freshness',render:v=>`${Math.round(v/60)} min ago`},{key:'indexed_records',label:'Documents',render:v=>Number(v).toLocaleString()},{key:'active_version',label:'Version'}]} rows={indexRows}/></Card>
-      <Card title="MCP Exposure" action="Manage"><div className="mcp-stats">{[['tools','Tools Enabled'],['resources','Resources Enabled'],['pending','Pending Approval'],['denied','Denied']].map(([k,l])=><div key={k}><b>{d.mcp[k]}</b><span>{l}</span></div>)}</div><div className="recent"><strong>Recent Tools / Resources</strong>{['search_clinical_docs','get_patient_context','retrieve_guidelines','vector_search'].map((x,i)=><p key={x}><code>▣ &nbsp;{x}</code><StatusPill value="approved"/><small>{i<2?i+2:7} days ago</small></p>)}</div></Card>
+      <Card title="MCP Exposure" action="Manage"><div className="mcp-stats">{[['tools','Tools Enabled'],['resources','Resources Enabled'],['pending','Pending Approval'],['denied','Denied']].map(([k,l])=><div key={k}><b>{d.mcp[k]}</b><span>{l}</span></div>)}</div><div className="recent"><strong>Recent Tools / Resources</strong>{(d.recent_mcp || []).map(x=><p key={x.name}><code>{x.name}</code><StatusPill value={x.status}/></p>)}</div></Card>
       <Card title="Top Consumers"><TinyTable columns={[{key:'name',label:'Consumer'},{key:'requests',label:'Requests (30d)'},{key:'retrieved',label:'Data Retrieved'},{key:'change',label:'Trend',render:v=><span className="trend">▂▃▄▅▆▇ ▲ +{v}%</span>}]} rows={d.consumers}/></Card>
     </div>
     <div className="bottom-grid"><Card title="Alerts / Guardrails" action="View All"><TinyTable columns={[{key:'time',label:'Time'},{key:'severity',label:'Severity',render:v=><StatusPill value={v}/>},{key:'type',label:'Type'},{key:'message',label:'Message'},{key:'status',label:'Status',render:v=><StatusPill value={v}/>}]} rows={d.alerts}/></Card><Card title="Latest Audit Events" action="View All"><TinyTable columns={[{key:'time',label:'Time'},{key:'actor',label:'Actor'},{key:'action',label:'Action'},{key:'resource',label:'Resource'},{key:'environment',label:'Environment'}]} rows={d.audit_events}/></Card></div>
@@ -138,7 +139,8 @@ function ResourcePanel({ type }) {
   const save = async (item) => {
     const id = item[RESOURCE_ID[type]];
     if (!id) throw new Error('id is required');
-    const res = await apiFetch(`${endpoint}/${encodeURIComponent(id)}`, {
+    const condition = type === 'datasets' && selected ? `?expected_version=${encodeURIComponent(selected.version)}` : '';
+    const res = await apiFetch(`${endpoint}/${encodeURIComponent(id)}${condition}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(item),
@@ -150,7 +152,8 @@ function ResourcePanel({ type }) {
 
   const remove = async (item) => {
     if (!window.confirm(`Delete ${type.slice(0, -1)} "${item.id}"?`)) return;
-    const res = await apiFetch(`${endpoint}/${encodeURIComponent(item.id)}`, { method: 'DELETE' });
+    const condition = type === 'datasets' ? `expected_version=${encodeURIComponent(item.version)}` : `expected_revision=${item.revision ?? 0}`;
+    const res = await apiFetch(`${endpoint}/${encodeURIComponent(item.id)}?${condition}`, { method: 'DELETE' });
     if (!res.ok) {
       const body = await readJson(res);
       throw new Error(body.detail || `HTTP ${res.status}`);
@@ -335,3 +338,4 @@ export default function EnterpriseControlHub() {
     </div>
   );
 }
+
