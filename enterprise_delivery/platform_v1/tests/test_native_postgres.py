@@ -217,3 +217,31 @@ def test_native_heterogeneous_json_values_do_not_break_typed_filters(native_env)
             {'field':'chunk_id','op':'eq','value':'chunk-100'},
             {'field':'attributes','path':[key],'op':'eq','value':value}]}))
         assert result.rows==[]
+
+
+def test_native_unbounded_source_vector_uses_dimension_expression_index(native_env):
+    engine,router,p,_=native_env
+    q=p.model_copy(deep=True); q.id='rdh-unbounded'; q.source.object_name='doc_chunks_unbounded'
+    q.retrieval.postgres.cast_vector=True
+    original=p.source.schema_name+'.'+p.source.object_name
+    target=q.source.schema_name+'.'+q.source.object_name
+    with engine.begin() as conn:
+        conn.exec_driver_sql(f'CREATE TABLE {target} (LIKE {original} INCLUDING CONSTRAINTS)')
+        conn.exec_driver_sql(f'ALTER TABLE {target} ADD PRIMARY KEY (chunk_id)')
+        conn.exec_driver_sql(f'ALTER TABLE {target} ALTER COLUMN chunk_vector TYPE public.vector')
+        conn.exec_driver_sql(f'INSERT INTO {target} SELECT * FROM {original} LIMIT 1000')
+    with engine.connect().execution_options(isolation_level='AUTOCOMMIT') as conn:
+        for statement in index_plan(q)['statements']: conn.exec_driver_sql(statement)
+    try:
+        report=validate_binding(router,q)
+        assert report['valid'],report['issues']
+        service,_,_,principal=service_for(router,q)
+        token=current_actor.set(principal.model_dump())
+        try:
+            result=service.vector_search(principal,q.id,VectorSearchRequest(vector=[1,1,0,0,0,0,0,0],
+                vector_profile='fixture-v1',top_k=5,return_text=True))
+        finally: current_actor.reset(token)
+        assert result.results
+        assert all(h.text and h.scores['vector'] is not None for h in result.results)
+    finally:
+        with engine.begin() as conn: conn.exec_driver_sql(f'DROP TABLE {target}')

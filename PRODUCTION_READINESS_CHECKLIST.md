@@ -82,3 +82,12 @@ These are not satisfied merely by an interface or an enum value:
 - No target-cluster failover, live managed-source/search/object-store trial, 100M run or 1B run has been performed in this work environment.
 
 These gates keep the PR in draft until the owning environment can provide the required infrastructure evidence. They do not prevent review of the implemented code or execution of the supplied test and deployment harnesses.
+
+
+## RDH schema implementation
+
+Native PostgreSQL chunk retrieval, compound typed filters (including arrays/JSONB), governed exact-ID lookup, filter discovery, administrator source inspection/drafting, physical binding validation, online index-plan generation and a PostgreSQL-only deployment overlay are implemented. See [RDH onboarding](enterprise_delivery/platform_v1/RDH_ONBOARDING.md) for deployment and consumer examples.
+
+Native source tests use a synthetic PostgreSQL/pgvector corpus matching the supplied chunk layout, including an unbounded vector column with an explicit dimension expression index. Source metadata is inspected rather than inferred from table names. Approval, tenancy and ACL fields added to test fixtures are synthetic and do not assert that those columns exist in RDH.
+
+Still required from the target environment: authoritative document/chat access and approval rules; real Q/HAQ-to-EDMS mappings; matching stored/query embedding model and dimensions; source-specific CDC capture where replication is needed; credentials, TLS/OIDC and network deployment; representative data-volume, concurrency, recall and HA qualification. Existing ingestion status must not be treated as document approval. Native reads avoid a replicated search copy but do not make source ingestion/embedding updates atomic or provide a multi-request database snapshot.
