@@ -304,12 +304,17 @@ def create_app(
         # server-side.
         vector_visible = Capability.VECTOR in decisions
         if vector_visible and retrieval and retrieval.vector:
+            embedder_models = getattr(service.embedder, "models", None)
+            query_text_supported = service.embedder is not None and (
+                embedder_models is None
+                or retrieval.vector.profile_id in embedder_models
+            )
             vector = {
                 "profile_id": retrieval.vector.profile_id,
                 "dimensions": retrieval.vector.dimensions,
                 "distance": retrieval.vector.distance,
-                "accepted_inputs": ["vector"] + (["query_text"] if service.embedder is not None else []),
-                "query_text_supported": service.embedder is not None,
+                "accepted_inputs": ["vector"] + (["query_text"] if query_text_supported else []),
+                "query_text_supported": query_text_supported,
             }
         return {
             "dataset_id": product.id,

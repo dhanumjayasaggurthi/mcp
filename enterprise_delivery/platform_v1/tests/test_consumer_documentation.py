@@ -2,6 +2,7 @@
 import json
 import re
 from pathlib import Path
+from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
 
@@ -119,6 +120,13 @@ def test_retrieval_contract_is_caller_specific_and_machine_discoverable():
     assert operation["responses"]["422"]["content"]["application/json"]["schema"]["$ref"].endswith(
         "/ErrorResponse"
     )
+
+    service.embedder = SimpleNamespace(models={})
+    no_query_embedding = client.get(
+        "/v1/datasets/regulatory-docs/retrieval-contract"
+    ).json()
+    assert no_query_embedding["vector"]["accepted_inputs"] == ["vector"]
+    assert no_query_embedding["vector"]["query_text_supported"] is False
 
     policies.put(
         allow_policy().model_copy(update={"operations": {Capability.KEYWORD}})

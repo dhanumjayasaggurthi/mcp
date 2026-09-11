@@ -94,7 +94,7 @@ sequenceDiagram
     D-->>R: Authorized RDH document ID
     R->>D: Lookup document chunks
     D-->>R: Ordered authorized chunks
-    R->>Q: Text and citations
+    R->>Q: Text and citation fields
 ```
 
 The first request follows [q-mapping-query-request.json](../../examples/consumers/regassist/q-mapping-query-request.json); its illustrative output is [q-mapping-query-response.json](../../examples/consumers/regassist/q-mapping-query-response.json). Replace `haq_id` and `rdh_doc_id` with the names published by the actual mapping dataset.
@@ -134,7 +134,7 @@ A successful empty result is HTTP 200 with `results: []` or `rows: []`. Do not t
 
 RegAssist should:
 
-- Preserve RDH citations with every generated answer.
+- Preserve selected citation fields from exact lookup, or `source.citations` from search/retrieval, with every generated answer.
 - Keep `trace_id` in internal diagnostics.
 - Avoid placing document text, queries or filters in ordinary logs.
 - Reject a response whose dataset/profile version is outside the application's tested compatibility range.
