@@ -15,6 +15,18 @@ patches:
     metadata:
       name: edp-export
     $patch: delete
+- patch: |-
+    apiVersion: policy/v1
+    kind: PodDisruptionBudget
+    metadata:
+      name: edp-indexing
+    $patch: delete
+- patch: |-
+    apiVersion: policy/v1
+    kind: PodDisruptionBudget
+    metadata:
+      name: edp-export
+    $patch: delete
 - target:
     kind: ConfigMap
     name: edp-config

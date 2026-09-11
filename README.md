@@ -1,6 +1,8 @@
-# Enterprise Governed Data Retrieval Platform
+# SmartHub MCP & Agentic Gateway
 
 A shared Data Product and policy layer for structured APIs, keyword/vector/hybrid retrieval, RAG, MCP, logical SQL ingress and asynchronous exports.
+
+The product display name is **SmartHub MCP & Agentic Gateway**. Existing API paths, `EDP_*` environment variables, Python import paths and Kubernetes resource names remain stable compatibility contracts.
 
 The production runtime uses PostgreSQL control state, bounded connectors, durable workers, canonical chunk authorization and OIDC. The reference runtime remains an explicit local-development option. Production environment and large-scale qualification are tracked separately from implementation.
 

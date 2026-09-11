@@ -1,4 +1,4 @@
-# Enterprise Governed Data Retrieval Platform v1
+# SmartHub MCP & Agentic Gateway v1
 
 ## Production runtime
 

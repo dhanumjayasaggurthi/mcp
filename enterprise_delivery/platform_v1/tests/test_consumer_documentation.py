@@ -29,6 +29,7 @@ from test_platform_core import allow_policy, build_service, principal
 ROOT = Path(__file__).parents[1]
 EXAMPLES = ROOT / "examples" / "consumers"
 DOCS = ROOT / "docs" / "consumers"
+PRODUCT_NAME = "SmartHub MCP & Agentic Gateway"
 
 
 def load(path):
@@ -111,6 +112,7 @@ def test_retrieval_contract_is_caller_specific_and_machine_discoverable():
     assert contract["result_identity"] == ["record_id", "chunk_id"]
 
     openapi = client.get("/openapi.json").json()
+    assert openapi["info"]["title"] == f"{PRODUCT_NAME} API"
     assert "/v1/datasets/{dataset_id}/retrieval-contract" in openapi["paths"]
     operation = openapi["paths"]["/v1/datasets/{dataset_id}/retrieval-contract"]["get"]
     assert operation["security"] == [{"HTTPBearer": []}]

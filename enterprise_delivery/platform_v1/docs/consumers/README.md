@@ -1,4 +1,4 @@
-# RDH consumer API documentation
+# SmartHub MCP & Agentic Gateway consumer API documentation
 
 This package separates the integration contract by consumer role. All IDs, text, scores and tokens in the examples are synthetic.
 

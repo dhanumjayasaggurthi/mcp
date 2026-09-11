@@ -1,4 +1,4 @@
-# RDH / DataHub: deploy, onboard and serve
+# SmartHub MCP & Agentic Gateway: RDH / DataHub onboarding
 
 This release adds direct PostgreSQL retrieval over the supplied chunk-table layout, governed exact-ID lookup, source inspection and typed compound filters. Existing keyword and vector APIs remain separate: RegAssist/Quill can combine their independently ranked results. Native PostgreSQL datasets do not need an OpenSearch copy or an indexing worker.
 

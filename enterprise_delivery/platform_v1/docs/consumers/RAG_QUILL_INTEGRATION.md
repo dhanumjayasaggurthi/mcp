@@ -1,4 +1,4 @@
-# RAG and Quill integration guide
+# SmartHub MCP & Agentic Gateway: RAG and Quill integration
 
 **Audience:** Quill, RAG retrieval, ranking and answer-generation engineers
 

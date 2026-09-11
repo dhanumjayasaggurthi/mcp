@@ -1,4 +1,4 @@
-name: enterprise-platform-ci
+name: smarthub-mcp-agentic-gateway-ci
 
 on:
   push:

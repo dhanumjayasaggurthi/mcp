@@ -1,4 +1,4 @@
-# Production readiness and evidence
+# SmartHub MCP & Agentic Gateway production readiness and evidence
 
 This is a production runtime implementation with deployment qualification still required. Passing local/CI tests does not establish the capacity, SLO, failover behavior or compliance of an unprovisioned enterprise environment. The evidence below distinguishes implemented behavior, tested integrations and remaining work.
 

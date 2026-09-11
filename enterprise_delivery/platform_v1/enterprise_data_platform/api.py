@@ -32,6 +32,7 @@ from .services import AccessDenied, CapabilityUnavailable, PlatformService
 from .aggregation import AggregateRequest
 from .promotion import IndexPromotionController, RetrievalQualityEvidence, PromotionBlocked
 from .operations import InMemoryOperationsProvider, OperationsProvider
+from .branding import API_TITLE
 
 PrincipalResolver = Callable[[Request], Principal]
 ControlAdminCheck = Callable[[Principal], bool]
@@ -72,9 +73,9 @@ def create_app(
         }.items()
     }
     app = FastAPI(
-        title="Enterprise Governed Data Retrieval API",
+        title=API_TITLE,
         version="1.0.0",
-        description="Governed structured and retrieval APIs for registered RDH data products.",
+        description="Governed structured, retrieval, MCP and agent-facing APIs for registered RDH data products.",
         responses=error_responses,
     )
     bearer_scheme = HTTPBearer(

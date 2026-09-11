@@ -1,6 +1,8 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { apiFetch } from './apiClient';
 
+export const PRODUCT_NAME = 'SmartHub MCP & Agentic Gateway';
+
 const NAV = [
   ['overview', 'Overview'],
   ['datasets', 'Data Products'],
@@ -314,7 +316,7 @@ export default function EnterpriseControlHub() {
     <div className="h-screen flex bg-jj-gray-01 text-jj-gray-08 overflow-hidden">
       <aside className="w-64 bg-white border-r border-jj-gray-02 flex flex-col flex-shrink-0">
         <div className="px-5 py-5 border-b border-jj-gray-02">
-          <div className="flex items-center gap-2.5"><div className="w-8 h-8 rounded-lg bg-jj-red flex items-center justify-center text-white font-johnson-display text-sm font-bold">J&J</div><div><p className="font-johnson-display text-base leading-tight">Data Control Hub</p><p className="font-johnson-text text-[10px] text-jj-gray-05 uppercase tracking-wider">Enterprise Retrieval</p></div></div>
+          <div className="flex items-center gap-2.5"><div className="w-8 h-8 rounded-lg bg-jj-red flex items-center justify-center text-white font-johnson-display text-sm font-bold">J&J</div><div><p className="font-johnson-display text-sm leading-tight">SmartHub</p><p className="font-johnson-text text-[10px] text-jj-gray-05 uppercase tracking-wider">MCP &amp; Agentic Gateway</p></div></div>
         </div>
         <nav className="p-3 space-y-1 overflow-y-auto flex-1">
           {NAV.map(([id, text]) => <button key={id} onClick={() => setSection(id)} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-left transition-colors ${section === id ? 'bg-jj-red/10 text-jj-red' : 'text-jj-gray-06 hover:bg-jj-gray-01 hover:text-jj-gray-08'}`}><Icon name={id} /><span className="font-johnson-text text-xs font-semibold">{text}</span>{section === id && <span className="ml-auto w-1.5 h-1.5 rounded-full bg-jj-red"/>}</button>)}
@@ -324,7 +326,7 @@ export default function EnterpriseControlHub() {
 
       <main className="flex-1 min-w-0 flex flex-col">
         <header className="h-16 bg-white border-b border-jj-gray-02 px-6 flex items-center gap-4 flex-shrink-0">
-          <div className="brand-head"><h1>Control Hub</h1><span>Governed enterprise data retrieval platform</span></div>
+          <div className="brand-head"><h1>{PRODUCT_NAME}</h1><span>Control Hub</span></div>
           <div className="flex-1"/><div className="env-switch"><button>DEV</button><button>QA</button><button className="active">PROD</button></div><div className="system-ok">● &nbsp; All Systems Operational⌄</div><span className="header-time">Apr 24, 2025&nbsp; 10:24 AM</span><b className="bell">♟<i>3</i></b><b className="avatar">●</b>
         </header>
         <div className="flex-1 overflow-auto p-6">
