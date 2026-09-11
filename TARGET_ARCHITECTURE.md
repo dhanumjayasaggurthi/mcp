@@ -1,4 +1,4 @@
-# Target architecture and implemented boundaries
+# SmartHub MCP & Agentic Gateway target architecture
 
 This change adds a separate production composition root while preserving the existing Data Product, policy, cursor, RRF, promotion, MCP, and Control Hub contracts. The production runtime is `enterprise_data_platform.production_app:create_production_app`. Reference adapters remain available only in the explicitly selected reference application.
 

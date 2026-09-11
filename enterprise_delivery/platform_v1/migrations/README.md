@@ -1,4 +1,4 @@
-# Control schema migration 001
+# SmartHub MCP & Agentic Gateway control schema migration 001
 
 The executable migration is `enterprise_data_platform.durable.migrate`, invoked by:
 

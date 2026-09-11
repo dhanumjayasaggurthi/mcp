@@ -1,4 +1,4 @@
-# RegAssist integration guide
+# SmartHub MCP & Agentic Gateway: RegAssist integration
 
 **Audience:** RegAssist API and orchestration engineers
 

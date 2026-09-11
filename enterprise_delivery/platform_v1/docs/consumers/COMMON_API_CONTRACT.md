@@ -1,4 +1,4 @@
-# Common consumer API contract
+# SmartHub MCP & Agentic Gateway common API contract
 
 **Contract:** REST API v1
 

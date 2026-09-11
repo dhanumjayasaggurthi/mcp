@@ -1,4 +1,4 @@
-# Architecture assessment
+# SmartHub MCP & Agentic Gateway architecture assessment
 
 Baseline: `840fa2ef38deb7271dc274815d2f60f0813acd23`, target `enterprise-data-platform-clean`; inspected 2026-09-08. All 60 tracked files were retrieved at that immutable commit. There is no AGENTS.md. The branch is a standalone v1 Python package plus a Control Hub and legacy patch files; the legacy host application/connectors are absent.
 

@@ -1,4 +1,4 @@
-# Deployment and operations
+# SmartHub MCP & Agentic Gateway deployment and operations
 
 The production entry point is `enterprise_data_platform.production_app:create_production_app`. It uses PostgreSQL for authoritative control state, admission and durable jobs. API, indexing and export processes run independently. Kubernetes manifests bind external dependencies; they do not provision an HA database, identity provider, search cluster or bucket.
 

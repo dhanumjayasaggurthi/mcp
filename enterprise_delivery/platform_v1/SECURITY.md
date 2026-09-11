@@ -1,4 +1,4 @@
-# Production security configuration
+# SmartHub MCP & Agentic Gateway production security configuration
 
 ## Identity and access
 

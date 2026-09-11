@@ -1,4 +1,4 @@
-# Structured data consumer integration guide
+# SmartHub MCP & Agentic Gateway: structured data integration
 
 **Audience:** reporting services, workflow applications and governed data clients
 

@@ -1,4 +1,4 @@
-# Reproducible performance harnesses
+# SmartHub MCP & Agentic Gateway performance harnesses
 
 `structured.py` isolates the core governed SQL/keyset path on a real synthetic SQLite table. It supports 10K, 1M, 100M and 1B row creation, but only **1M was actually executed** for the committed baseline/new comparison. Seeding uses bounded batches; it does not allocate all rows in memory. Existing databases must match the declared row count.
 

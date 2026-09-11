@@ -1,4 +1,4 @@
-# Migration plan
+# SmartHub MCP & Agentic Gateway migration plan
 
 ## 1. Establish a recovery point
 

@@ -1,4 +1,4 @@
-# Implementation status
+# SmartHub MCP & Agentic Gateway implementation status
 
 The durable production runtime, source framework, shared governor, search/indexing/export adapters, OIDC identity, compatibility layer, deployment templates and test harnesses are now implemented. The source-specific and environment qualification gates are recorded in [PRODUCTION_READINESS_CHECKLIST.md](../PRODUCTION_READINESS_CHECKLIST.md). This status does not certify production capacity or replace those gates.
 
@@ -8,7 +8,7 @@ The table below is retained as the historical September 6 reference/core status.
 
 ---
 
-# Enterprise Data Retrieval & Control Hub — Execution Status
+# SmartHub MCP & Agentic Gateway — Execution Status
 
 **Execution date:** 2026-09-06  
 **Rule:** a task is marked complete only after its automated gate passes. No production-readiness claim is made for infrastructure adapters that require enterprise runtime systems not present in the uploaded code set.
