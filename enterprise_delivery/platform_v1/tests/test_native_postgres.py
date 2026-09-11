@@ -47,10 +47,10 @@ def native_env():
         conn.exec_driver_sql(f'''INSERT INTO {schema}.doc_chunks_clinical
             (chunk_id,doc_id,file_name,file_path,chunk_index,chunk_total,chunk_level,section_title,
              page_start,page_end,content_types,chunk_text,chunk_vector,attributes,approval_status,tenant_id,acl_groups)
-            SELECT 'chunk-'||n, 'doc-'||((n-1)/5), 'protocol.pdf', '/approved/protocol.pdf', (n-1)%5, 5,
-              'section', 'Safety', (n-1)%10+1, (n-1)%10+2, ARRAY['text','table'],
+            SELECT 'chunk-'||n, 'doc-'||((n-1)/5), 'protocol.pdf', '/approved/protocol.pdf', mod(n-1,5), 5,
+              'section', 'Safety', mod(n-1,10)+1, mod(n-1,10)+2, ARRAY['text','table'],
               CASE WHEN n <= 20 THEN 'clinical adverse event protocol' ELSE 'manufacturing procedure' END,
-              ('['||((n%20)+1)::text||',1,0,0,0,0,0,0]')::vector(8),
+              ('['||(mod(n,20)+1)::text||',1,0,0,0,0,0,0]')::vector(8),
               '{{"site":{{"country":"US"}},"flag":true}}'::jsonb,
               CASE WHEN n=2 THEN 'DRAFT' ELSE 'APPROVED' END,
               CASE WHEN n=3 THEN 'other' ELSE 'acme' END,
