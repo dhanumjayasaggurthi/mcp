@@ -7,6 +7,12 @@ from .context import ExecutionContext, current_actor, current_context
 
 class Metrics:
     def __init__(self):
+        from collections import deque
+        from threading import RLock
+        self._samples = deque(maxlen=10000)
+        self._lock = RLock()
+        self._started = time.monotonic()
+        self._last_eviction = None
         from opentelemetry import metrics
         meter = metrics.get_meter('enterprise_data_platform')
         self.requests = meter.create_counter('edp.requests')
@@ -16,11 +22,40 @@ class Metrics:
         self.active = meter.create_up_down_counter('edp.requests.active')
 
     def record(self, operation, seconds, outcome='ok', rows=0, byte_count=0):
+        with self._lock:
+            if len(self._samples) == self._samples.maxlen:
+                self._last_eviction = self._samples[0][0]
+            self._samples.append((time.monotonic(), operation, max(0, seconds), outcome, rows, byte_count))
         labels = {'operation': operation, 'outcome': outcome}
         self.requests.add(1, labels)
         self.latency.record(seconds, labels)
         self.rows.add(rows, {'operation': operation})
         self.bytes.add(byte_count, {'operation': operation})
+
+    def snapshot(self):
+        import math
+        import os
+        from datetime import datetime, timezone
+        now = time.monotonic()
+        with self._lock:
+            samples = [s for s in self._samples if s[0] >= now - 300]
+            truncated = self._last_eviction is not None and self._last_eviction >= now - 300
+        def summary(rows):
+            latencies = sorted(s[2] * 1000 for s in rows)
+            return {"requests": len(rows), "p95_ms": round(latencies[math.ceil(len(rows) * .95) - 1], 2) if rows else None,
+                    "error_rate": round(sum(s[3] not in {"ok", "denied", "overloaded"} for s in rows) * 100 / len(rows), 2) if rows else None,
+                    "denied": sum(s[3] == "denied" for s in rows),
+                    "overloaded": sum(s[3] == "overloaded" for s in rows),
+                    "returned_rows": sum(s[4] for s in rows)}
+        return {"generated_at": datetime.now(timezone.utc).isoformat(), "scope": "replica",
+                "instance": os.getenv("HOSTNAME", "current-process"), "window_seconds": 300,
+                "sample_limit": self._samples.maxlen, "truncated": truncated,
+                "covered_seconds": round(min(300, now - self._started, now - samples[0][0] if truncated and samples else 300), 2),
+                "exporter_configured": bool(os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT")),
+                "totals": summary(samples),
+                "operations": [{"operation": operation, **summary([s for s in samples if s[1] == operation])}
+                               for operation in sorted({s[1] for s in samples})]}
+
 
 
 class RequestBoundary:

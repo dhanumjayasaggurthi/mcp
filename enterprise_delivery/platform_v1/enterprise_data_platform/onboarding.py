@@ -201,6 +201,19 @@ def validate_binding(router, product):
 def register_onboarding(app, runtime):
     admin = app.state.admin_dependency
 
+    @app.post('/v1/control/sources/{source_id}/check')
+    def check_source(source_id: str, principal=Depends(admin)):
+        import time
+        from .durable import now_iso
+        from fastapi import HTTPException
+        start = time.monotonic()
+        source = binding(runtime.router, source_id, InspectRequest(object_name='connection_check'))
+        connector = runtime.router.resolve(SimpleNamespace(source=source))
+        if not connector.health():
+            raise HTTPException(503, 'Source did not pass its connection check')
+        return {'source_id': source_id, 'status': 'reachable', 'checked_at': now_iso(),
+                'elapsed_ms': round((time.monotonic() - start) * 1000, 2)}
+
     @app.get('/v1/control/sources/{source_id}/objects')
     def objects(source_id: str, schema_name: str | None = None, limit: int = Query(100, ge=1, le=200), principal=Depends(admin)):
         source = binding(runtime.router, source_id, InspectRequest(schema_name=schema_name, object_name='discovery'))

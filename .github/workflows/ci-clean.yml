@@ -76,6 +76,20 @@ jobs:
           kubectl kustomize enterprise_delivery/platform_v1/deploy/kubernetes/base > /tmp/edp-base.yaml
           kubectl kustomize enterprise_delivery/platform_v1/deploy/kubernetes/canary > /tmp/edp-canary.yaml
           kubectl kustomize enterprise_delivery/platform_v1/deploy/kubernetes/postgres-native > /tmp/edp-native.yaml
+          kubectl kustomize enterprise_delivery/platform_v1/deploy/kubernetes/console > /tmp/smarthub-console.yaml
+      - name: Build and check console container
+        run: |
+          docker build -t smarthub-console-ci enterprise_delivery/platform_v1/frontend
+          docker run -d --name console-ci --read-only --tmpfs /tmp:uid=101,gid=101 --tmpfs /etc/nginx/conf.d:uid=101,gid=101 -e API_UPSTREAM=http://127.0.0.1:8081 -p 127.0.0.1:8088:8080 smarthub-console-ci
+          for attempt in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:8088/console-health; then
+              curl -fsS http://127.0.0.1:8088/ | grep -q 'SmartHub MCP'
+              exit 0
+            fi
+            sleep 1
+          done
+          docker logs console-ci
+          exit 1
       - name: Build production image
         run: docker build -t edp-ci enterprise_delivery/platform_v1
       - name: Verify fail-closed startup
@@ -144,3 +158,43 @@ jobs:
           pip install --require-hashes -r requirements.lock
           PYTHONPATH=. pytest -q tests/test_connector_integration.py
 
+
+  console-e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install console and isolated API dependencies
+        working-directory: enterprise_delivery/platform_v1
+        run: |
+          pip install --require-hashes -r requirements.lock
+          npm ci --prefix frontend
+          cd frontend
+          npm install --no-save --package-lock=false @playwright/test@1.55.1
+          npx playwright install --with-deps chromium
+          npm run build
+      - name: Exercise console against real durable API
+        working-directory: enterprise_delivery/platform_v1
+        run: |
+          PYTHONPATH=.:tests uvicorn ui_server:create_test_app --factory --host 127.0.0.1 --port 8080 --no-access-log > /tmp/smarthub-ui-api.log 2>&1 &
+          api_pid=$!
+          trap 'kill "$api_pid" || true' EXIT
+          for attempt in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:8080/livez >/dev/null; then break; fi
+            sleep 1
+          done
+          cd frontend
+          npm run test:e2e || { cat /tmp/smarthub-ui-api.log; exit 1; }
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: smarthub-console-browser-evidence
+          path: |
+            enterprise_delivery/platform_v1/frontend/screenshots
+            enterprise_delivery/platform_v1/frontend/playwright-report
+            enterprise_delivery/platform_v1/frontend/test-results

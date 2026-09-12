@@ -65,17 +65,17 @@ class SQLOperationsProvider:
                 return conn.scalar(select(func.count()).select_from(objects).where(objects.c.kind == kind,
                     objects.c.deleted.is_(False), objects.c.payload[field].as_string() == value))
             active_datasets, active_clients, healthy_indexes = active('datasets'), active('clients'), active('indexes', 'state', 'healthy')
-        return {'generated_at': now_iso(), 'system_status': 'operational', 'environment': 'prod',
+        return {'generated_at': now_iso(), 'system_status': 'control_store_ready', 'environment': os.getenv('EDP_ENVIRONMENT', 'prod'),
             'reference_mode': False,
             'metrics': {'active_data_products': {'value': active_datasets}, 'active_consumers': {'value': active_clients},
-                'healthy_indexes': {'value': healthy_indexes}}, 'resources': resource_counts, 'jobs': job_counts,
+                'healthy_indexes': {'value': healthy_indexes}}, 'resources': {kind: resource_counts.get(kind, 0) for kind in ('datasets','sources','clients','agents','policies','guardrails','indexes')}, 'jobs': job_counts,
             'deployment': {'current': os.getenv('EDP_RELEASE', '—'), 'candidate': '—', 'traffic': '—', 'stage': None},
             'policy': {'allowed': active_clients, 'total': resource_counts.get('clients', 0), 'masked_fields': '—',
                 'masked_products': '—', 'row_filters': '—', 'quotas_near_limit': '—'},
             'services': [], 'mcp': {'tools': '—', 'resources': '—', 'pending': '—', 'denied': '—'},
             'consumers': [], 'alerts': [], 'recent_mcp': [],
             'audit_events': [{'time': r['created_at'], 'actor': r['actor'].get('subject', 'system'), 'action': r['action'],
-                'resource': r['resource'], 'environment': 'prod'} for r in recent]}
+                'resource': r['resource'], 'environment': os.getenv('EDP_ENVIRONMENT', 'prod')} for r in recent]}
 
 
 @dataclass
@@ -172,7 +172,7 @@ def create_production_app():
         control_state=runtime.control, principal_resolver=resolver,
         control_admin_check=lambda p: 'data-platform-admin' in p.groups and 'edp:admin' in p.attributes.get('oauth_scope', '').split(),
         promotion_controller=SQLIndexPromotionController(runtime.store), operations_provider=SQLOperationsProvider(runtime.store),
-        readiness_check=runtime.store.ready)
+        readiness_check=runtime.store.ready, runtime_mode='production')
     from .onboarding import register_onboarding
     register_onboarding(app, runtime)
     from fastapi.middleware.gzip import GZipMiddleware
