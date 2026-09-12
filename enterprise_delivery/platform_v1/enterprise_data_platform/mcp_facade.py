@@ -42,7 +42,7 @@ class MCPFacade:
             {
                 "name": "retrieve_context",
                 "description": "Return governed RAG-ready clear text chunks with source metadata.",
-                "inputSchema": {"type": "object", "required": ["dataset_id", "query"], "properties": {"dataset_id": {"type": "string"}, "query": {"type": "string"}, "mode": {"enum": ["keyword", "vector", "hybrid"]}, "top_k": {"type": "integer"}}},
+                "inputSchema": {"type": "object", "required": ["dataset_id", "query"], "properties": {"dataset_id": {"type": "string"}, "query": {"type": "string"}, "mode": {"enum": ["auto", "keyword", "vector", "hybrid"]}, "top_k": {"type": "integer"}}},
             },
         ]
 
@@ -105,7 +105,7 @@ class MCPFacade:
             top_k = min(int(arguments.get("top_k") or agent.max_top_k), agent.max_top_k)
             request = RetrieveRequest(
                 query=str(arguments.get("query") or ""),
-                mode=arguments.get("mode") or "hybrid",
+                mode=arguments.get("mode") or "auto",
                 filter=arguments.get("filter"),
                 top_k=top_k,
             )

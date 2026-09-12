@@ -60,6 +60,8 @@ class GovernedPlanner:
         reason = 'Capability-compatible pushdown with source cost inspection and bounded result delivery' if structured else 'Use configured retrieval accelerators and verify canonical ACLs'
         if operation == Capability.RETRIEVE:
             mode = request.mode
+            if mode == 'auto':
+                mode = 'hybrid' if product.retrieval.vector and Capability.HYBRID in product.capabilities else 'keyword'
             if mode == 'hybrid' and context.remaining() < 1 and product.retrieval.allow_keyword_fallback:
                 mode, updates = 'keyword', {'mode': 'keyword'}
                 reason = 'Explicitly allowed keyword fallback fits the remaining request deadline'

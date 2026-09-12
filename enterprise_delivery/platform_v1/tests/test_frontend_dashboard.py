@@ -1,26 +1,19 @@
+"""Production guard checks; functional UI coverage lives in Playwright."""
 from pathlib import Path
+ROOT=Path(__file__).parents[1]/'frontend'
+UI=(ROOT/'EnterpriseControlHub.jsx').read_text()
 
 
-UI = (Path(__file__).parents[1] / "frontend" / "EnterpriseControlHub.jsx").read_text()
-HTML = (Path(__file__).parents[1] / "frontend" / "index.html").read_text()
-PRODUCT_NAME = "SmartHub MCP & Agentic Gateway"
+def test_production_shell_has_no_fabricated_health_or_time():
+    for old in ['Apr 24, 2025','All Systems Operational','Control plane connected','▂▃▄▅▆▇']:
+        assert old not in UI
+    assert 'SmartHub MCP & Agentic Gateway' in UI
+    assert '<title>SmartHub MCP &amp; Agentic Gateway</title>' in (ROOT/'index.html').read_text() or '<title>SmartHub MCP & Agentic Gateway</title>' in (ROOT/'index.html').read_text()
 
 
-def test_target_dashboard_sections_are_present():
-    for label in [
-        "Active Data Products", "Healthy Indexes", "Policy Violations", "Active Consumers",
-        "P95 Latency", "Error Rate", "Deployment & Promotion", "Policy Enforcement",
-        "Retrieval Services", "Index Health", "MCP Exposure", "Top Consumers",
-        "Alerts / Guardrails", "Latest Audit Events",
-    ]:
-        assert label in UI
-
-
-def test_target_navigation_and_environment_controls_are_present():
-    for label in ["Audit", "Environments", "Access Control", "DEV", "QA", "PROD", "All Systems Operational"]:
-        assert label in UI
-
-
-def test_canonical_product_title_is_present_in_frontend_surfaces():
-    assert PRODUCT_NAME in UI
-    assert f"<title>{PRODUCT_NAME}</title>" in HTML
+def test_identity_adapter_never_persists_access_tokens():
+    auth=(ROOT/'src/auth.js').read_text()
+    assert 'InMemoryWebStorage' in auth
+    assert 'response_type: "code"' in auth
+    assert 'localStorage' not in auth
+    assert 'Bearer ${token}' in (ROOT/'apiClient.js').read_text()

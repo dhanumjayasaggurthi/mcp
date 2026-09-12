@@ -67,6 +67,30 @@ jobs:
           npm run check
 
 
+  browser:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Exercise authenticated workflows and accessibility
+        working-directory: enterprise_delivery/platform_v1
+        run: |
+          pip install --require-hashes -r requirements.lock
+          cd frontend
+          npm ci
+          npx playwright install --with-deps chromium
+          npx playwright test
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: control-hub-browser-results
+          path: enterprise_delivery/platform_v1/frontend/test-results
+
   deployment:
     runs-on: ubuntu-latest
     steps:
@@ -78,6 +102,8 @@ jobs:
           kubectl kustomize enterprise_delivery/platform_v1/deploy/kubernetes/postgres-native > /tmp/edp-native.yaml
       - name: Build production image
         run: docker build -t edp-ci enterprise_delivery/platform_v1
+      - name: Build Control Hub image
+        run: docker build -t edp-ui-ci enterprise_delivery/platform_v1/frontend
       - name: Verify fail-closed startup
         run: |
           if docker run --rm edp-ci; then
@@ -143,4 +169,5 @@ jobs:
         run: |
           pip install --require-hashes -r requirements.lock
           PYTHONPATH=. pytest -q tests/test_connector_integration.py
+
 

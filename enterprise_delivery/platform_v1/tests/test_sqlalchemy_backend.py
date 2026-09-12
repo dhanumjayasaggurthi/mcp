@@ -97,4 +97,4 @@ def test_sql_backend_uses_pushdown_keyset_and_never_offset():
         if statement.lstrip().upper().startswith("SELECT") and " OFFSET " in statement.upper() and isinstance(params, tuple):
             assert params[-1] == 0
     assert "tenant_id" in query_sql
-    assert "orders.amount >" in query_sql.lower() or "orders.id >" in query_sql.lower()
+    assert "(orders.amount, orders.id) >" in query_sql.lower()

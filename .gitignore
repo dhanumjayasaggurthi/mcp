@@ -13,3 +13,9 @@ dist/
 **/pytest-of-root/
 **/.hypothesis/
 **/*.egg-info/
+
+
+# Local validation artifacts
+**/test-results/
+**/playwright-report/
+**/*.egg-info/

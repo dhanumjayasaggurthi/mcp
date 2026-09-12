@@ -37,6 +37,7 @@ class DraftDatasetRequest(InspectRequest):
     postgres: PostgresRetrievalProfile | None = None
     tenant_field: str | None = None
     mandatory_filter: dict | None = None
+    allow_keyword_fallback: bool = False
 
 
 def binding(router, source_id, body):
@@ -129,7 +130,8 @@ def draft_dataset(router, body):
         retrieval = RetrievalProfile(backend='postgres', postgres=mapping,
             keyword_index=body.version, vector=body.vector_profile,
             text=TextProfile(source_fields=[mapping.text_field]),
-            deduplicate_content=False, max_chunks_per_record=100)
+            deduplicate_content=False, max_chunks_per_record=100,
+            allow_keyword_fallback=body.allow_keyword_fallback)
     product = DataProduct(id=body.dataset_id, display_name=body.display_name, version=body.version,
         status=ProductStatus.DRAFT, source=binding(router, body.source_id, body).model_copy(update={'environment': body.environment}),
         identity_fields=report['primary_key'], fields=fields, capabilities=capabilities,
@@ -163,7 +165,12 @@ def validate_binding(router, product):
         mapping = product.retrieval.postgres
         if report['dialect'] != 'postgresql': issues.append('native retrieval requires PostgreSQL')
         index_text = ' '.join(' '.join(str(c) for c in [*x['columns'], *x['expressions']]) for x in report['indexes'] if x['method'] == 'gin' and x.get('usable', True))
-        if mapping.keyword_tsvector_field:
+        if mapping.keyword_mode == 'contains':
+            if not any(x['method'] == 'gin' and x.get('usable', True) and
+                       mapping.text_field in x['columns'] and 'gin_trgm_ops' in x.get('definition', '')
+                       for x in report['indexes']):
+                issues.append('contains retrieval requires a usable trigram GIN index on the text field')
+        elif mapping.keyword_tsvector_field:
             if columns.get(mapping.keyword_tsvector_field, {}).get('data_type', '').split('.')[-1] != 'tsvector':
                 issues.append('keyword_tsvector_field must be a tsvector column')
             if mapping.keyword_tsvector_field not in index_text:
@@ -233,7 +240,9 @@ def register_onboarding(app, runtime):
 
     @app.post('/v1/control/onboarding/index-plan')
     def indexes(body: DataProduct, principal=Depends(admin)):
-        return index_plan(body)
+        report = inspect_object(runtime.router, body.source.source_id or body.source.connector,
+                                InspectRequest(schema_name=body.source.schema_name, object_name=body.source.object_name))
+        return index_plan(body, report)
 
     def activation_validator(product):
         if product.status != ProductStatus.ACTIVE: return
@@ -245,7 +254,7 @@ def register_onboarding(app, runtime):
     app.state.dataset_validator = activation_validator
 
 
-def index_plan(product):
+def index_plan(product, report=None):
     """Reviewable online DDL; never executed by the API's read-only source role."""
     from sqlalchemy.dialects.postgresql import dialect
     from .durable import fingerprint
@@ -270,7 +279,31 @@ def index_plan(product):
         ops = {'cosine': 'vector_cosine_ops', 'dot': 'vector_ip_ops', 'l2': 'vector_l2_ops'}[profile.distance]
         statements.append(f'CREATE INDEX CONCURRENTLY {quote(prefix + "_hnsw")} ON {table} USING hnsw ({column} {quote(mapping.vector_schema)}.{ops}) WITH (m=16, ef_construction=128);')
     statements.append(f'ANALYZE {table};')
-    return {'dataset_id': product.id, 'statements': statements, 'executed': False,
+    skipped = []
+    if report:
+        indexes = [x for x in report['indexes'] if x.get('usable', True)]
+        checks = [lambda x: x['method'] == 'gin' and (
+            mapping.keyword_tsvector_field in x['columns'] if mapping.keyword_tsvector_field else
+            'to_tsvector' in str(x['expressions']) and mapping.text_field in str(x['expressions']) and
+            mapping.text_search_config.split('.')[-1] in str(x['expressions'])),
+            lambda x: (x['method'] in {'btree', None}) and x['columns'][:len(list(dict.fromkeys(ordering)))] == list(dict.fromkeys(ordering))]
+        if product.retrieval.vector:
+            checks.append(lambda x: x['method']=='hnsw' and mapping.vector_field in str(x['columns']+x['expressions'])
+                and ops in x.get('definition','') and
+                (not mapping.cast_vector or f'vector({profile.dimensions})' in x.get('definition','')))
+        kept = []
+        for statement, check in zip(statements[:-1], checks):
+            equivalent = next((x for x in indexes if check(x)), None)
+            if equivalent: skipped.append({'statement': statement, 'existing_index': equivalent['name']})
+            else: kept.append(statement)
+        statements = kept + [statements[-1]]
+    if mapping.keyword_mode == 'contains':
+        statements = [s for s in statements if '_fts"' not in s]
+        # Inspection resolves extension schema; never assume public.gin_trgm_ops.
+        if not report or not any(x.get('usable', True) and x['method']=='gin' and mapping.text_field in x['columns']
+                                 and 'gin_trgm_ops' in x.get('definition','') for x in report['indexes']):
+            raise ValueError('provision a trigram GIN index using the installed pg_trgm schema before contains activation')
+    return {'dataset_id': product.id, 'statements': statements, 'executed': False, 'skipped': skipped,
             'instructions': ['Use a source-owner DDL role; run each statement outside a transaction',
                              'Check existing equivalent indexes and invalid indexes before executing',
                              'Verify embedding dimensions and model before building HNSW',
