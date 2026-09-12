@@ -9,12 +9,14 @@ from enterprise_data_platform.api import create_app, _register_registry_routes
 from enterprise_data_platform.connectors import SourceRegistration
 from enterprise_data_platform.durable import RelationalStore, migrate
 from enterprise_data_platform.onboarding import register_onboarding
+from enterprise_data_platform.observability import Metrics
 from enterprise_data_platform.production_app import SQLOperationsProvider
 from test_production_boundaries import runtime_service
 
 
 def build_console_app(store):
     service, actor = runtime_service(store)
+    service.metrics = Metrics()
     def resolver(request):
         token = request.headers.get("authorization")
         if token not in {"Bearer ui-test-token", "Bearer ui-reader-token"}:

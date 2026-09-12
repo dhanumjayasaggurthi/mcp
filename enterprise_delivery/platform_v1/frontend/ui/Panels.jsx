@@ -9,7 +9,7 @@ export function Metric({ label, value, icon, color = 'violet', hint, onClick }) 
 }
 export function Overview({ session, navigate, onOnboard }) {
   const snapshot = useResource('/v1/control/dashboard');
-  const summary = useResource('/v1/control/overview');
+  const summary = useResource(snapshot.data && !snapshot.data.resources ? '/v1/control/overview' : null);
   const feed = useResource('/v1/control/audit?limit=6&action=control.put');
   const [refreshing, setRefreshing] = useState(false);
   const data = snapshot.data;

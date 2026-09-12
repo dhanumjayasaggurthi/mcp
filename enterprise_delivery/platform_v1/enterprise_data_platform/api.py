@@ -414,6 +414,10 @@ def create_app(
         from .console_api import control_page
         return control_page(catalog, "datasets", after, limit)
 
+    @app.get("/v1/control/datasets/{dataset_id}")
+    def get_control_dataset(dataset_id: str, _: Principal = Depends(admin_dep)):
+        return catalog.get(dataset_id).model_dump(mode="json")
+
     @app.put("/v1/control/datasets/{dataset_id}")
     def put_dataset(dataset_id: str, body: dict, response: Response, expected_version: str | None = None, _: Principal = Depends(admin_dep)):
         from .models import DataProduct
@@ -515,6 +519,12 @@ def _register_registry_routes(app: FastAPI, name: str, registry, model_cls, admi
 
     list_items.__name__ = f"list_{name}"
     app.get(list_path)(list_items)
+
+    def get_item(item_id: str, _: Principal = Depends(admin_dep)):
+        return registry.get(item_id).model_dump(mode="json")
+
+    get_item.__name__ = f"get_{name}"
+    app.get(item_path)(get_item)
 
     def put_item(item_id: str, body: dict, _: Principal = Depends(admin_dep)):
         item = model_cls.model_validate({**body, "id": item_id})

@@ -65,7 +65,16 @@ test('explorer sends compound filters and displays the authorized SQL response',
   await login(page);await go(page,'API explorer');
   await page.getByLabel('Authorized data product').selectOption('facts');
   await expect(page.getByLabel('Request JSON')).toHaveValue(/count_mode/);
-  await page.getByLabel('Request JSON').fill(JSON.stringify({select:['id','amount'],limit:25,filter:{and:[{field:'amount',op:'gte',value:20},{field:'id',op:'in',value:[2,3]}]}}));
+  await page.getByText('Build multi-field filters',{exact:false}).click();
+  await page.getByRole('button',{name:'Add rule',exact:true}).click();
+  await page.getByLabel('Filter field 1',{exact:true}).selectOption('amount');
+  await page.getByLabel('Filter operator 1',{exact:true}).selectOption('gte');
+  await page.getByLabel('Filter value 1',{exact:true}).fill('20');
+  await page.getByRole('button',{name:'Add rule',exact:true}).click();
+  await page.getByLabel('Filter field 2',{exact:true}).selectOption('id');
+  await page.getByLabel('Filter operator 2',{exact:true}).selectOption('in');
+  await page.getByLabel('Filter value 2',{exact:true}).fill('[2,3]');
+  await page.getByRole('button',{name:'Apply filters to request',exact:true}).click();
   await page.getByRole('button',{name:'Run request',exact:true}).click();
   await expect(page.getByRole('table')).toContainText('20');
   await expect(page.getByRole('table')).not.toContainText('999');

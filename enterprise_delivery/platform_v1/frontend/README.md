@@ -30,7 +30,7 @@ window.smarthubConfig = {
     scope: "openid profile edp:admin edp:query edp:keyword edp:vector edp:retrieve"
   },
   environments: [
-    { name: "QA workspace", url: "https://smarthub-qa.example.com/" }
+    { label: "QA workspace", url: "https://smarthub-qa.example.com/" }
   ]
 };
 ```

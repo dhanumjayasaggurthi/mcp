@@ -37,6 +37,8 @@ def test_registry_pages_and_stale_writes(store):
         assert [x["id"] for x in first["clients"] + second["clients"]] == ["app", "b", "c"]
         assert second["next_cursor"] is None
         assert client.get("/v1/control/clients?limit=201", headers=HEADERS).status_code == 422
+        assert client.get("/v1/control/clients/b", headers=HEADERS).json()["id"] == "b"
+        assert client.get("/v1/control/datasets/facts", headers=HEADERS).json()["id"] == "facts"
         old = first["clients"][1]
         assert client.put("/v1/control/clients/b", headers=HEADERS, json={**old, "display_name": "changed"}).status_code == 200
         assert client.put("/v1/control/clients/b", headers=HEADERS, json=old).status_code == 409
