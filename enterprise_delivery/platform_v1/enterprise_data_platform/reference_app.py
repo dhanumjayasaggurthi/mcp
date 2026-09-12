@@ -35,7 +35,7 @@ from .models import (
     VectorProfile,
 )
 from .policy import PolicyEngine
-from .operations import InMemoryOperationsProvider, reference_operations_snapshot
+from .operations import InMemoryOperationsProvider
 from .services import PlatformService
 
 
@@ -270,7 +270,8 @@ def _build_app():
         control_state=control,
         principal_resolver=_principal,
         control_admin_check=lambda p: "data-platform-admin" in p.groups,
-        operations_provider=InMemoryOperationsProvider(reference_operations_snapshot()),
+        operations_provider=InMemoryOperationsProvider({'reference_mode': True, 'environment': 'dev'}),
+        runtime_mode='reference',
     )
     app.add_middleware(
         CORSMiddleware,

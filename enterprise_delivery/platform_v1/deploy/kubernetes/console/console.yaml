@@ -1,0 +1,57 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: smarthub-console
+spec:
+  replicas: 2
+  selector:
+    matchLabels: {app: smarthub-console}
+  template:
+    metadata:
+      labels: {app: smarthub-console}
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 101
+        runAsGroup: 101
+        fsGroup: 101
+      containers:
+        - name: console
+          image: ghcr.io/dhanumjayasaggurthi/smarthub-console:replace-with-release
+          ports:
+            - {name: http, containerPort: 8080}
+          env:
+            - {name: API_UPSTREAM, value: "http://edp-api:8080"}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+            seccompProfile: {type: RuntimeDefault}
+          resources:
+            requests: {cpu: 100m, memory: 64Mi}
+            limits: {cpu: "1", memory: 256Mi}
+          readinessProbe:
+            httpGet: {path: /console-health, port: http}
+          livenessProbe:
+            httpGet: {path: /console-health, port: http}
+          volumeMounts:
+            - {name: temporary, mountPath: /tmp}
+            - {name: nginx-config, mountPath: /etc/nginx/conf.d}
+            - {name: runtime, mountPath: /usr/share/nginx/html/runtime-config.js, subPath: runtime-config.js, readOnly: true}
+      volumes:
+        - name: temporary
+          emptyDir: {sizeLimit: 64Mi}
+        - name: nginx-config
+          emptyDir: {sizeLimit: 1Mi}
+        - name: runtime
+          configMap: {name: smarthub-console-runtime}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: smarthub-console
+spec:
+  selector: {app: smarthub-console}
+  ports:
+    - {name: http, port: 8080, targetPort: http}

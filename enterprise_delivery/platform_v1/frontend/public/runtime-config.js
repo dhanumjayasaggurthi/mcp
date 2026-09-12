@@ -1,0 +1,1 @@
+window.smarthubConfig = window.smarthubConfig || {};

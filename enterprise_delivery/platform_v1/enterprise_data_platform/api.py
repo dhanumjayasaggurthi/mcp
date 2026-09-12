@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Callable
 
-from fastapi import Depends, FastAPI, HTTPException, Request, Response, status
+from fastapi import Depends, FastAPI, HTTPException, Request, Response, Query, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from starlette.exceptions import HTTPException as StarletteHTTPException
@@ -49,6 +49,7 @@ def create_app(
     promotion_controller: IndexPromotionController | None = None,
     operations_provider: OperationsProvider | None = None,
     readiness_check=None,
+    runtime_mode: str = "custom",
 ) -> FastAPI:
     """Create the v1 API application.
 
@@ -409,8 +410,13 @@ def create_app(
         return operations_provider.snapshot()
 
     @app.get("/v1/control/datasets")
-    def control_datasets(_: Principal = Depends(admin_dep)):
-        return {"datasets": [p.model_dump(mode="json") for p in catalog.list()]}
+    def control_datasets(after: str = Query("", max_length=256), limit: int = Query(100, ge=1, le=200), _: Principal = Depends(admin_dep)):
+        from .console_api import control_page
+        return control_page(catalog, "datasets", after, limit)
+
+    @app.get("/v1/control/datasets/{dataset_id}")
+    def get_control_dataset(dataset_id: str, _: Principal = Depends(admin_dep)):
+        return catalog.get(dataset_id).model_dump(mode="json")
 
     @app.put("/v1/control/datasets/{dataset_id}")
     def put_dataset(dataset_id: str, body: dict, response: Response, expected_version: str | None = None, _: Principal = Depends(admin_dep)):
@@ -424,8 +430,9 @@ def create_app(
         return saved.model_dump(mode="json")
 
     @app.get("/v1/control/policies")
-    def list_policies(_: Principal = Depends(admin_dep)):
-        return {"policies": [p.model_dump(mode="json") for p in policies.list()]}
+    def list_policies(after: str = Query("", max_length=256), limit: int = Query(100, ge=1, le=200), _: Principal = Depends(admin_dep)):
+        from .console_api import control_page
+        return control_page(policies, "policies", after, limit)
 
     @app.delete('/v1/control/datasets/{dataset_id}', status_code=204)
     def delete_dataset(dataset_id: str, expected_version: str | None = None, _: Principal = Depends(admin_dep)):
@@ -497,6 +504,8 @@ def create_app(
 
     app.state.admin_dependency = admin_dep
     app.state.principal_dependency = principal_dep
+    from .console_api import register_console
+    register_console(app, service, control_admin_check, runtime_mode)
     return app
 
 
@@ -504,11 +513,18 @@ def _register_registry_routes(app: FastAPI, name: str, registry, model_cls, admi
     list_path = f"/v1/control/{name}"
     item_path = f"/v1/control/{name}/{{item_id}}"
 
-    def list_items(_: Principal = Depends(admin_dep)):
-        return {name: [x.model_dump(mode="json") for x in registry.list()]}
+    def list_items(after: str = Query("", max_length=256), limit: int = Query(100, ge=1, le=200), _: Principal = Depends(admin_dep)):
+        from .console_api import control_page
+        return control_page(registry, name, after, limit)
 
     list_items.__name__ = f"list_{name}"
     app.get(list_path)(list_items)
+
+    def get_item(item_id: str, _: Principal = Depends(admin_dep)):
+        return registry.get(item_id).model_dump(mode="json")
+
+    get_item.__name__ = f"get_{name}"
+    app.get(item_path)(get_item)
 
     def put_item(item_id: str, body: dict, _: Principal = Depends(admin_dep)):
         item = model_cls.model_validate({**body, "id": item_id})
