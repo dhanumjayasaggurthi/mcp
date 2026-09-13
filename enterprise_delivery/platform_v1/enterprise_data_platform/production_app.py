@@ -122,10 +122,11 @@ def control_engine(secrets):
 
 
 def build_runtime():
+    from .configuration import configured_secrets
+    secrets = configured_secrets()
     configure_telemetry()
     import boto3
     from botocore.config import Config
-    secrets = MountedSecretProvider(os.getenv('EDP_SECRET_DIR', '/run/secrets/edp'))
     engine = control_engine(secrets)
     store = RelationalStore(engine)
     if not store.ready():

@@ -95,3 +95,50 @@ planning remain separate engineering/release work. No billion-row throughput or
 latency claim is made. Telemetry shown in the UI is explicitly bounded to the
 serving API replica, not cluster-wide history. Advanced free-form mapping fields
 still use JSON inputs; core resource and promotion forms use typed controls.
+
+## Private config.ini (Linux and Windows)
+
+Copy `config.example.ini` to `config.ini`, fill in deployment values, and set
+`EDP_CONFIG_FILE` to its absolute path. It configures API, migration and worker
+processes. There is no automatic current-directory discovery. Environment values
+win over matching INI values; restart processes after configuration changes.
+Use a dedicated control database in `[database]`, not the RDH source database.
+The database password is escaped correctly into the DSN. PostgreSQL TLS
+`verify-full` remains mandatory, including development; configure a trusted CA
+and hostname. Use migration-owner credentials for migrations and runtime-role
+credentials for API/workers.
+
+Linux:
+
+```sh
+cp config.example.ini config.ini
+chmod 600 config.ini
+export EDP_CONFIG_FILE="$PWD/config.ini"
+.venv/bin/python -m enterprise_data_platform.workers migrate
+.venv/bin/python -m uvicorn enterprise_data_platform.production_app:create_production_app --factory --host 127.0.0.1 --port 8080
+```
+
+Windows PowerShell:
+
+```powershell
+Copy-Item config.example.ini config.ini
+$env:EDP_CONFIG_FILE = (Resolve-Path config.ini).Path
+.\.venv\Scripts\python.exe -m enterprise_data_platform.workers migrate
+.\.venv\Scripts\python.exe -m uvicorn enterprise_data_platform.production_app:create_production_app --factory --host 127.0.0.1 --port 8080 --reload
+```
+
+Keep this file readable only by the runtime account (Windows ACLs or Linux file
+permissions). Do not put it under the frontend static directory. `config.ini`
+and `config.*.ini` are Git-ignored; the example contains no credentials. Secrets
+can live in `[secrets]` with `ini://secrets/name` references, or separate restricted
+files with `file://name`. Relative `secret_dir` resolves beside the INI file.
+Generate a strong random cursor key and retain it across restarts.
+
+This does not add provider integrations simply by naming INI sections. Azure
+chat/GPT/image/audio, Bedrock and Vertex sections from the reference are not wired
+into the runtime. The embedding section uses the existing service protocol,
+not Azure's deployment/API-version protocol. Snowflake source registrations still
+use the source registry and connector-specific configuration. Admin access stays
+OIDC-based; `[app] admin_username/admin_password` is not a supported login method.
+The browser still uses public `VITE_OIDC_*` settings; it never reads this private
+INI file. Worker readiness paths now use the platform temporary directory.

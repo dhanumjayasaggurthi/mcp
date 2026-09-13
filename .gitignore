@@ -19,3 +19,8 @@ dist/
 **/test-results/
 **/playwright-report/
 **/*.egg-info/
+
+# Private runtime configuration
+config.ini
+config.*.ini
+!config.example.ini
