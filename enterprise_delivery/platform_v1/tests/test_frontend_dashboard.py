@@ -11,9 +11,10 @@ def test_production_shell_has_no_fabricated_health_or_time():
     assert '<title>SmartHub MCP &amp; Agentic Gateway</title>' in (ROOT/'index.html').read_text() or '<title>SmartHub MCP & Agentic Gateway</title>' in (ROOT/'index.html').read_text()
 
 
-def test_identity_adapter_never_persists_access_tokens():
+def test_identity_adapter_delegates_storage_to_auth_library():
     auth=(ROOT/'src/auth.js').read_text()
     assert 'InMemoryWebStorage' in auth
     assert 'response_type: "code"' in auth
-    assert 'localStorage' not in auth
+    assert 'localStorage.setItem' not in auth
+    assert 'VITE_CONTROL_HUB_API_SCOPES' in auth
     assert 'Bearer ${token}' in (ROOT/'apiClient.js').read_text()

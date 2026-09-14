@@ -42,7 +42,7 @@ docker build -t control-hub-ui \
 Configure the real public OIDC client with PKCE, the exact callback
 `https://<hub-host>/auth/callback`, post-logout origin, authorized scopes and API
 audience. The frontend can also consume the existing host `window.edpAuth`
-adapter. Access tokens remain in memory. No secret belongs in Vite build args.
+adapter. OIDC fallback tokens remain in memory; MSAL cache behavior is documented in SMARTHUB_SETUP.md. No secret belongs in Vite build args.
 Route `/v1/*` and `/mcp` on the same HTTPS ingress to the API, and all UI routes to
 the frontend on port 8080. The static server deliberately does not proxy to a
 guessed API hostname. Configure TLS/HSTS and identity-provider-compatible CSP at
@@ -134,11 +134,8 @@ can live in `[secrets]` with `ini://secrets/name` references, or separate restri
 files with `file://name`. Relative `secret_dir` resolves beside the INI file.
 Generate a strong random cursor key and retain it across restarts.
 
-This does not add provider integrations simply by naming INI sections. Azure
-chat/GPT/image/audio, Bedrock and Vertex sections from the reference are not wired
-into the runtime. The embedding section uses the existing service protocol,
-not Azure's deployment/API-version protocol. Snowflake source registrations still
-use the source registry and connector-specific configuration. Admin access stays
-OIDC-based; `[app] admin_username/admin_password` is not a supported login method.
-The browser still uses public `VITE_OIDC_*` settings; it never reads this private
-INI file. Worker readiness paths now use the platform temporary directory.
+For the SmartHub MSAL, PostgreSQL source, Snowflake RSA and Azure embedding
+integration, follow `SMARTHUB_SETUP.md`. Other legacy ingestion/provider sections
+are not executed merely because they are present. Admin login remains SSO-based.
+The browser never reads this private INI file. Worker readiness paths use the
+platform temporary directory.

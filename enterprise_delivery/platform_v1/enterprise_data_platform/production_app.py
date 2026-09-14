@@ -137,6 +137,13 @@ def build_runtime():
     search = OpenSearchTransport(required('EDP_SEARCH_URL'), secrets.resolve(required('EDP_SEARCH_TOKEN_REF'))) if os.getenv('EDP_SEARCH_URL') else None
     embeddings = OpenSearchTransport(required('EDP_EMBEDDING_URL'), secrets.resolve(required('EDP_EMBEDDING_TOKEN_REF'))) if os.getenv('EDP_EMBEDDING_URL') else None
     embedder = HTTPEmbeddingProvider(embeddings, json.loads(required('EDP_EMBEDDING_PROFILES'))) if embeddings else None
+    from .azure_embedding import configured_azure_embedding
+    azure_transport, azure_provider = configured_azure_embedding(secrets)
+    if azure_transport:
+        if embeddings:
+            azure_transport.close()
+            raise ValueError('Configure one embedding backend, not both generic and Azure')
+        embeddings, embedder = azure_transport, azure_provider
     storage = None
     if os.getenv('EDP_EXPORT_BUCKET'):
         s3 = boto3.client('s3', config=Config(connect_timeout=5, read_timeout=10,
@@ -168,10 +175,12 @@ def build_runtime():
 def create_production_app():
     runtime = build_runtime()
     resolver = JWTPrincipalResolver(issuer=required('EDP_OIDC_ISSUER'), audience=required('EDP_OIDC_AUDIENCE'),
-        jwks_url=required('EDP_OIDC_JWKS_URL'))
+        jwks_url=required('EDP_OIDC_JWKS_URL'), required_scope=os.getenv('EDP_OIDC_REQUIRED_SCOPE'),
+        allowed_client_ids=[x.strip() for x in os.getenv('EDP_OIDC_ALLOWED_CLIENT_IDS', '').split(',') if x.strip()])
+    from .identity import control_admin_authorizer
     app = create_app(service=runtime.service, catalog=runtime.catalog, policies=runtime.policies,
         control_state=runtime.control, principal_resolver=resolver,
-        control_admin_check=lambda p: 'data-platform-admin' in p.groups and 'edp:admin' in p.attributes.get('oauth_scope', '').split(),
+        control_admin_check=control_admin_authorizer(),
         promotion_controller=SQLIndexPromotionController(runtime.store), operations_provider=SQLOperationsProvider(runtime.store, runtime.service.metrics),
         readiness_check=runtime.store.ready)
     from .onboarding import register_onboarding

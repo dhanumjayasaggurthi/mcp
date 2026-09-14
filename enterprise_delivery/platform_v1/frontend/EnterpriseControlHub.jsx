@@ -69,7 +69,10 @@ function Shell() {
   const [command, setCommand] = useState(false);
   const [term, setTerm] = useState("");
   const [authError, setAuthError] = useState(null);
-  const session = useQuery(queryOptions(["session"], `${control}/session`));
+  const session = useQuery({
+    ...queryOptions(["session"], `${control}/session`),
+    enabled: location.pathname !== "/logout",
+  });
   const navigate = useNavigate();
   React.useEffect(() => {
     function key(e) {
@@ -81,6 +84,18 @@ function Shell() {
     window.addEventListener("keydown", key);
     return () => window.removeEventListener("keydown", key);
   }, []);
+  if (location.pathname === "/logout")
+    return (
+      <div className="auth-page">
+        <div className="auth-card">
+          <h1>You have been signed out</h1>
+          <p>Your local Control Hub session has ended.</p>
+          <a className="button primary" href="/">
+            Sign back in
+          </a>
+        </div>
+      </div>
+    );
   if (session.isPending)
     return (
       <div className="auth-page">

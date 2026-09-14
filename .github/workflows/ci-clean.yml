@@ -65,6 +65,7 @@ jobs:
           npm ci
           npm run build
           npm run check
+          npm run test:auth
 
 
   browser:
