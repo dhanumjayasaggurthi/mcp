@@ -52,8 +52,9 @@ def required(name):
 
 
 class SQLOperationsProvider:
-    def __init__(self, store):
+    def __init__(self, store, metrics=None):
         self.store = store
+        self.metrics = metrics
 
     def snapshot(self):
         with self.store.engine.connect() as conn:
@@ -65,17 +66,16 @@ class SQLOperationsProvider:
                 return conn.scalar(select(func.count()).select_from(objects).where(objects.c.kind == kind,
                     objects.c.deleted.is_(False), objects.c.payload[field].as_string() == value))
             active_datasets, active_clients, healthy_indexes = active('datasets'), active('clients'), active('indexes', 'state', 'healthy')
-        return {'generated_at': now_iso(), 'system_status': 'operational', 'environment': 'prod',
-            'reference_mode': False,
+        return {'generated_at': now_iso(), 'system_status': 'unknown',
+            'environment': os.getenv('EDP_ENVIRONMENT', 'prod'), 'reference_mode': False,
             'metrics': {'active_data_products': {'value': active_datasets}, 'active_consumers': {'value': active_clients},
                 'healthy_indexes': {'value': healthy_indexes}}, 'resources': resource_counts, 'jobs': job_counts,
-            'deployment': {'current': os.getenv('EDP_RELEASE', '—'), 'candidate': '—', 'traffic': '—', 'stage': None},
-            'policy': {'allowed': active_clients, 'total': resource_counts.get('clients', 0), 'masked_fields': '—',
-                'masked_products': '—', 'row_filters': '—', 'quotas_near_limit': '—'},
-            'services': [], 'mcp': {'tools': '—', 'resources': '—', 'pending': '—', 'denied': '—'},
-            'consumers': [], 'alerts': [], 'recent_mcp': [],
+            'deployment': {'current': os.getenv('EDP_RELEASE'), 'candidate': None, 'traffic': None, 'stage': None},
+            'policy': {}, 'services': [], 'mcp': {}, 'consumers': [], 'alerts': [], 'recent_mcp': [],
+            'telemetry': self.metrics.snapshot() if self.metrics else {'available': False, 'reason': 'Telemetry reader is not configured'},
             'audit_events': [{'time': r['created_at'], 'actor': r['actor'].get('subject', 'system'), 'action': r['action'],
-                'resource': r['resource'], 'environment': 'prod'} for r in recent]}
+                'resource': r['resource'], 'trace_id': r['trace_id']} for r in recent]}
+
 
 
 @dataclass
@@ -122,10 +122,11 @@ def control_engine(secrets):
 
 
 def build_runtime():
+    from .configuration import configured_secrets
+    secrets = configured_secrets()
     configure_telemetry()
     import boto3
     from botocore.config import Config
-    secrets = MountedSecretProvider(os.getenv('EDP_SECRET_DIR', '/run/secrets/edp'))
     engine = control_engine(secrets)
     store = RelationalStore(engine)
     if not store.ready():
@@ -136,6 +137,13 @@ def build_runtime():
     search = OpenSearchTransport(required('EDP_SEARCH_URL'), secrets.resolve(required('EDP_SEARCH_TOKEN_REF'))) if os.getenv('EDP_SEARCH_URL') else None
     embeddings = OpenSearchTransport(required('EDP_EMBEDDING_URL'), secrets.resolve(required('EDP_EMBEDDING_TOKEN_REF'))) if os.getenv('EDP_EMBEDDING_URL') else None
     embedder = HTTPEmbeddingProvider(embeddings, json.loads(required('EDP_EMBEDDING_PROFILES'))) if embeddings else None
+    from .azure_embedding import configured_azure_embedding
+    azure_transport, azure_provider = configured_azure_embedding(secrets)
+    if azure_transport:
+        if embeddings:
+            azure_transport.close()
+            raise ValueError('Configure one embedding backend, not both generic and Azure')
+        embeddings, embedder = azure_transport, azure_provider
     storage = None
     if os.getenv('EDP_EXPORT_BUCKET'):
         s3 = boto3.client('s3', config=Config(connect_timeout=5, read_timeout=10,
@@ -167,14 +175,18 @@ def build_runtime():
 def create_production_app():
     runtime = build_runtime()
     resolver = JWTPrincipalResolver(issuer=required('EDP_OIDC_ISSUER'), audience=required('EDP_OIDC_AUDIENCE'),
-        jwks_url=required('EDP_OIDC_JWKS_URL'))
+        jwks_url=required('EDP_OIDC_JWKS_URL'), required_scope=os.getenv('EDP_OIDC_REQUIRED_SCOPE'),
+        allowed_client_ids=[x.strip() for x in os.getenv('EDP_OIDC_ALLOWED_CLIENT_IDS', '').split(',') if x.strip()])
+    from .identity import control_admin_authorizer
     app = create_app(service=runtime.service, catalog=runtime.catalog, policies=runtime.policies,
         control_state=runtime.control, principal_resolver=resolver,
-        control_admin_check=lambda p: 'data-platform-admin' in p.groups and 'edp:admin' in p.attributes.get('oauth_scope', '').split(),
-        promotion_controller=SQLIndexPromotionController(runtime.store), operations_provider=SQLOperationsProvider(runtime.store),
+        control_admin_check=control_admin_authorizer(),
+        promotion_controller=SQLIndexPromotionController(runtime.store), operations_provider=SQLOperationsProvider(runtime.store, runtime.service.metrics),
         readiness_check=runtime.store.ready)
     from .onboarding import register_onboarding
     register_onboarding(app, runtime)
+    from .mcp_transport import register_mcp
+    mcp_manager = register_mcp(app, runtime)
     from fastapi.middleware.gzip import GZipMiddleware
     app.add_middleware(GZipMiddleware, minimum_size=1000)
     aliases = SQLRegistry(runtime.store, 'aliases', AliasRegistration)
@@ -208,11 +220,13 @@ def create_production_app():
 
     @asynccontextmanager
     async def lifespan(app):
-        yield
-        from starlette.concurrency import run_in_threadpool
-        await run_in_threadpool(runtime.close)
+        try:
+            async with mcp_manager.run():
+                yield
+        finally:
+            from starlette.concurrency import run_in_threadpool
+            await run_in_threadpool(runtime.close)
     app.router.lifespan_context = lifespan
     app.state.runtime = runtime
     instrument(app)
     return app
-

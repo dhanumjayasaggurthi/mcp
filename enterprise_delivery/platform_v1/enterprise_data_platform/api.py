@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Callable
 
-from fastapi import Depends, FastAPI, HTTPException, Request, Response, status
+from fastapi import Depends, FastAPI, HTTPException, Request, Response, Query, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from starlette.exceptions import HTTPException as StarletteHTTPException
@@ -409,8 +409,8 @@ def create_app(
         return operations_provider.snapshot()
 
     @app.get("/v1/control/datasets")
-    def control_datasets(_: Principal = Depends(admin_dep)):
-        return {"datasets": [p.model_dump(mode="json") for p in catalog.list()]}
+    def control_datasets(after: str = "", limit: int = Query(50, ge=1, le=200), _: Principal = Depends(admin_dep)):
+        return _control_page("datasets", catalog, after, limit)
 
     @app.put("/v1/control/datasets/{dataset_id}")
     def put_dataset(dataset_id: str, body: dict, response: Response, expected_version: str | None = None, _: Principal = Depends(admin_dep)):
@@ -423,9 +423,20 @@ def create_app(
         response.headers["ETag"] = saved.version
         return saved.model_dump(mode="json")
 
+    @app.get('/v1/control/datasets/{dataset_id}')
+    def get_dataset(dataset_id: str, _=Depends(admin_dep)):
+        return catalog.get(dataset_id).model_dump(mode='json')
+
+    @app.get('/v1/control/policies/{policy_id}')
+    def get_policy(policy_id: str, _=Depends(admin_dep)):
+        for policy in policies.list():
+            if policy.id == policy_id:
+                return policy.model_dump(mode='json')
+        raise ResourceNotFound(policy_id)
+
     @app.get("/v1/control/policies")
-    def list_policies(_: Principal = Depends(admin_dep)):
-        return {"policies": [p.model_dump(mode="json") for p in policies.list()]}
+    def list_policies(after: str = "", limit: int = Query(50, ge=1, le=200), _: Principal = Depends(admin_dep)):
+        return _control_page("policies", getattr(policies, "registry", policies), after, limit)
 
     @app.delete('/v1/control/datasets/{dataset_id}', status_code=204)
     def delete_dataset(dataset_id: str, expected_version: str | None = None, _: Principal = Depends(admin_dep)):
@@ -497,6 +508,8 @@ def create_app(
 
     app.state.admin_dependency = admin_dep
     app.state.principal_dependency = principal_dep
+    from .control_api import register_control_api
+    register_control_api(app, service, catalog, policies, control_state)
     return app
 
 
@@ -504,11 +517,17 @@ def _register_registry_routes(app: FastAPI, name: str, registry, model_cls, admi
     list_path = f"/v1/control/{name}"
     item_path = f"/v1/control/{name}/{{item_id}}"
 
-    def list_items(_: Principal = Depends(admin_dep)):
-        return {name: [x.model_dump(mode="json") for x in registry.list()]}
+    def list_items(after: str = "", limit: int = Query(50, ge=1, le=200), _: Principal = Depends(admin_dep)):
+        return _control_page(name, registry, after, limit)
 
     list_items.__name__ = f"list_{name}"
     app.get(list_path)(list_items)
+
+    def get_item(item_id: str, _: Principal = Depends(admin_dep)):
+        return registry.get(item_id).model_dump(mode='json')
+
+    get_item.__name__ = f'get_{name}'
+    app.get(item_path)(get_item)
 
     def put_item(item_id: str, body: dict, _: Principal = Depends(admin_dep)):
         item = model_cls.model_validate({**body, "id": item_id})
@@ -532,3 +551,12 @@ def _json_error(status_code: int, detail: str):
 
     from .context import trace_id
     return JSONResponse(status_code=status_code, content={'detail': detail, 'code': str(status_code), 'trace_id': trace_id()})
+
+
+def _control_page(name, registry, after, limit):
+    if hasattr(registry, 'store'):
+        rows = registry.list(after=after, limit=limit+1)
+    else:
+        rows = [row for row in sorted(registry.list(), key=lambda r: r.id) if row.id > after][:limit+1]
+    return {name: [row.model_dump(mode='json') for row in rows[:limit]],
+            'next_after': rows[limit-1].id if len(rows) > limit else None}

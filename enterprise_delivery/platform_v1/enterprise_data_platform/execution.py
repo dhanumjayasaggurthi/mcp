@@ -1,7 +1,7 @@
 """Production service boundary shared by REST, SQL, exports and MCP."""
 from functools import wraps
 import time
-from .context import current_actor, execution_context
+from .context import current_actor, current_context, execution_context
 from .durable import canonical_json
 from .models import Capability, StructuredQueryRequest
 from .services import AccessDenied, PlatformService
@@ -24,6 +24,8 @@ def governed(operation, workload):
                     self.metrics.active.add(1, {'operation': operation.value})
                 try:
                     product, decision = self._decision(principal, dataset_id, operation)
+                    if operation == Capability.RETRIEVE:
+                        request = request.model_copy(update={'mode': self.resolve_retrieval_mode(product, request.mode)})
                     client = self.control.clients.get(principal.client_id)
                     source = product.source.source_id or product.source.connector
                     with self.governor.admit(principal, source, context.workload, context, client):
@@ -38,7 +40,8 @@ def governed(operation, workload):
                         row_count = getattr(result, 'returned_rows', len(getattr(result, 'results', [])))
                         if byte_count > self.governor.limits.max_result_bytes:
                             raise ValueError('response exceeds configured byte budget')
-                        self.store.audit('execution.complete', dataset_id, {'operation': operation.value})
+                        self.store.audit('execution.complete', dataset_id, {'operation': operation.value,
+                            'duration_ms': round((time.monotonic() - started) * 1000, 3), 'rows': row_count, 'bytes': byte_count})
                         return result
                 except Exception as exc:
                     from .governor import Overloaded
@@ -63,6 +66,13 @@ class GovernedService(PlatformService):
 
     def _decision(self, principal, dataset_id, operation):
         from .control_state import ResourceNotFound
+        context = current_context.get()
+        key = (id(self), dataset_id, operation.value, canonical_json(principal.model_dump()))
+        if context and key in context.decisions:
+            if principal.attributes.get('identity_expires') and time.time() >= float(principal.attributes['identity_expires']):
+                raise AccessDenied('identity grant expired')
+            product, decision = context.decisions[key]
+            return product.model_copy(deep=True), decision.model_copy(deep=True)
         actor = {'subject': principal.subject, 'client_id': principal.client_id, 'tenant': principal.tenant, 'agent_id': principal.agent_id}
         try:
             if principal.attributes.get('identity_expires') and time.time() >= float(principal.attributes['identity_expires']):
@@ -100,6 +110,8 @@ class GovernedService(PlatformService):
             self.store.audit('authorization.deny', dataset_id, {'operation': operation.value}, actor=actor)
             raise AccessDenied('operation is not authorized') from exc
         self.store.audit('authorization.allow', dataset_id, {'operation': operation.value, 'policies': decision.matched_policy_ids}, actor=actor)
+        if context:
+            context.decisions[key] = (product.model_copy(deep=True), decision.model_copy(deep=True))
         return product, decision
 
     @governed(Capability.QUERY, 'interactive')

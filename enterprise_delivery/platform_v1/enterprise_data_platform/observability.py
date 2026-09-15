@@ -7,6 +7,10 @@ from .context import ExecutionContext, current_actor, current_context
 
 class Metrics:
     def __init__(self):
+        from collections import deque
+        from threading import Lock
+        self._recent = deque(maxlen=2000)
+        self._lock = Lock()
         from opentelemetry import metrics
         meter = metrics.get_meter('enterprise_data_platform')
         self.requests = meter.create_counter('edp.requests')
@@ -16,11 +20,27 @@ class Metrics:
         self.active = meter.create_up_down_counter('edp.requests.active')
 
     def record(self, operation, seconds, outcome='ok', rows=0, byte_count=0):
+        with self._lock:
+            self._recent.append((time.monotonic(), operation, seconds, outcome, rows))
         labels = {'operation': operation, 'outcome': outcome}
         self.requests.add(1, labels)
         self.latency.record(seconds, labels)
         self.rows.add(rows, {'operation': operation})
         self.bytes.add(byte_count, {'operation': operation})
+
+    def snapshot(self):
+        import math
+        with self._lock:
+            recent = [r for r in self._recent if r[0] >= time.monotonic()-3600]
+        result = []
+        for op in sorted({r[1] for r in recent}):
+            values = [r for r in recent if r[1] == op]
+            durations = sorted(r[2] for r in values)
+            result.append({'operation': op, 'requests': len(values),
+                'p95_ms': round(durations[max(0, math.ceil(.95*len(durations))-1)]*1000, 2),
+                'errors': sum(r[3] != 'ok' for r in values), 'rows': sum(r[4] for r in values)})
+        return {'available': True, 'scope': 'This API replica, last hour (bounded sample)',
+                'sample_limit': 2000, 'operations': result}
 
 
 class RequestBoundary:

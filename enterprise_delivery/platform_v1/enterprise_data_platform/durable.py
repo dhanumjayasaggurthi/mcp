@@ -2,6 +2,7 @@
 from __future__ import annotations
 from contextlib import nullcontext
 
+from copy import deepcopy
 import hashlib
 import json
 import uuid
@@ -118,11 +119,17 @@ class RelationalStore:
                 transaction.execute(insert(audits).values(**value))
 
     def get(self, kind, item_id, *, include_deleted=False):
+        context = current_context.get()
+        key = (id(self), kind, item_id, include_deleted)
+        if context and key in context.control_reads:
+            return deepcopy(context.control_reads[key])
         with self.engine.connect() as conn:
             row = conn.execute(select(objects).where(objects.c.kind == kind, objects.c.id == item_id)).mappings().first()
         if row is None or (row['deleted'] and not include_deleted):
             raise ResourceNotFound(item_id)
-        return dict(row)
+        result = dict(row)
+        if context: context.control_reads[key] = deepcopy(result)
+        return result
 
     def list(self, kind, *, after='', limit=1000):
         if not 1 <= limit <= 1000:
@@ -150,6 +157,10 @@ class RelationalStore:
                     {'revision': revision}, conn=conn)
         except IntegrityError as exc:
             raise CatalogConflict('object exists; read its current revision before updating') from exc
+        context = current_context.get()
+        if context:
+            context.control_reads.clear()
+            context.decisions.clear()
         return revision
 
     def delete(self, kind, item_id, *, expected_revision):
@@ -229,12 +240,18 @@ class SQLPolicyEngine(PolicyEngine):
         self.registry = SQLRegistry(store, 'policies', AccessPolicy)
 
     def list(self):
-        rows = self.registry.list()
-        if len(rows) == 1000:
-            # Never authorize using an incomplete policy snapshot (e.g. missing
-            # deny on the next page). Partition the PDP before this limit.
+        context = current_context.get()
+        key = (id(self), 'policy_snapshot')
+        if context and key in context.control_reads:
+            return deepcopy(context.control_reads[key])
+        with self.registry.store.engine.connect() as conn:
+            rows = [self.registry._decode(r) for r in conn.execute(select(objects).where(
+                objects.c.kind == 'policies', objects.c.deleted.is_(False)).order_by(objects.c.id).limit(10001)).mappings()]
+        if len(rows) > 10000:
             raise RuntimeError('policy snapshot exceeds supported bound')
-        return sorted(rows, key=lambda p: (p.priority, p.id))
+        rows.sort(key=lambda p:(p.priority,p.id))
+        if context: context.control_reads[key] = deepcopy(rows)
+        return rows
 
     def put(self, policy):
         return self.registry.put(policy)
@@ -273,3 +290,4 @@ def migrate(engine):
             conn.execute(insert(schema_versions).values(version=1))
         elif current != 1:
             raise RuntimeError('unsupported control schema version')
+
