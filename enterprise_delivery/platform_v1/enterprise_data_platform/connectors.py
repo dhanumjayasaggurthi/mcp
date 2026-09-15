@@ -60,7 +60,7 @@ class SourceRegistration(BaseModel):
     id: str = Field(pattern=r'^[a-zA-Z0-9._-]{1,128}$')
     revision: int = Field(default=0, ge=0)
     kind: str
-    secret_ref: str = Field(pattern=r'^(file|vault|aws-sm|env)://[^\s]+$')
+    secret_ref: str = Field(pattern=r'^(file|ini|vault|aws-sm|env)://[^\s]+$')
     enabled: bool = True
     pool_size: int = Field(default=8, ge=1, le=100)
     pool_timeout_seconds: int = Field(default=2, ge=1, le=30)

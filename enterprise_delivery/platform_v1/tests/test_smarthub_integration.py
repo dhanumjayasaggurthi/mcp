@@ -83,3 +83,10 @@ def test_snowflake_url_contains_no_key_material(tmp_path):
     value=IniSecretProvider(config,tmp_path).resolve('ini://snowflake/dsn')
     assert make_url(value).get_backend_name()=='snowflake'
     assert 'private_key' not in value
+
+
+def test_ini_source_references_are_accepted():
+    from enterprise_data_platform.connectors import SourceRegistration
+    for kind in ['postgres', 'snowflake']:
+        item = SourceRegistration(id=kind, kind=kind, secret_ref=f'ini://{kind}/dsn')
+        assert item.secret_ref == f'ini://{kind}/dsn'
