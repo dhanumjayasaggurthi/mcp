@@ -105,6 +105,13 @@ class PostgresRetrievalBackend:
         mapping = product.retrieval.postgres
         chunk_id = table.c[mapping.chunk_id_field]
         if self.kind == 'keyword':
+            if mapping.keyword_mode == 'contains':
+                if not query or len(query.strip()) < 3:
+                    raise ValueError('contains retrieval requires at least three characters')
+                from .sqlalchemy_backend import SQLAlchemyStructuredBackend
+                match = table.c[mapping.text_field].ilike('%' + SQLAlchemyStructuredBackend._escape_like(query) + '%', escape='\\')
+                return select(*columns, literal_column('1.0').label('_retrieval_score')).where(
+                    and_(True, *constraints), match).order_by(chunk_id).limit(top_k), 'postgres_literal_contains'
             # Validated administrator regconfig is a SQL constant so prepared
             # generic plans can match the expression GIN index. Query text stays bound.
             config = literal_column("'" + mapping.text_search_config + "'::regconfig", type_=REGCONFIG)

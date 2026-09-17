@@ -11,7 +11,7 @@ production:
 	uvicorn enterprise_data_platform.production_app:create_production_app --factory --host 0.0.0.0 --port 8080 --limit-concurrency 64 --timeout-graceful-shutdown 35 --no-access-log
 
 migrate:
-	python -m enterprise_data_platform.workers migrate
+	./scripts/bootstrap_control_postgres.sh
 
 export-worker:
 	python -m enterprise_data_platform.workers export

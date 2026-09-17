@@ -20,7 +20,8 @@ def main():
     args = parser.parse_args()
     if args.role == 'migrate':
         import os
-        engine = control_engine(MountedSecretProvider(os.getenv('EDP_SECRET_DIR', '/run/secrets/edp')))
+        from .configuration import configured_secrets
+        engine = control_engine(configured_secrets())
         try:
             migrate(engine)
         finally:
@@ -28,7 +29,8 @@ def main():
         return
     runtime = build_runtime()
     from pathlib import Path
-    ready = Path('/tmp/edp-ready')
+    import tempfile
+    ready = Path(tempfile.gettempdir()) / 'edp-ready'
     stopping = Event()
     for sig in [signal.SIGTERM, signal.SIGINT]:
         signal.signal(sig, lambda *_: stopping.set())
@@ -73,3 +75,4 @@ def main():
 
 if __name__ == '__main__':
     main()
+

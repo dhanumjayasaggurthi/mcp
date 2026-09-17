@@ -60,7 +60,7 @@ class SourceRegistration(BaseModel):
     id: str = Field(pattern=r'^[a-zA-Z0-9._-]{1,128}$')
     revision: int = Field(default=0, ge=0)
     kind: str
-    secret_ref: str = Field(pattern=r'^(file|vault|aws-sm|env)://[^\s]+$')
+    secret_ref: str = Field(pattern=r'^(file|ini|vault|aws-sm|env)://[^\s]+$')
     enabled: bool = True
     pool_size: int = Field(default=8, ge=1, le=100)
     pool_timeout_seconds: int = Field(default=2, ge=1, le=30)
@@ -155,6 +155,8 @@ def sql_factory(kind, registration, secrets):
             'session_parameters': {'STATEMENT_TIMEOUT_IN_SECONDS': registration.statement_timeout_seconds}}
     # Generic/Denodo/ODBC use the driver's validated URL configuration. No
     # arbitrary options are expanded into code or connection keyword arguments.
+    if kind == 'snowflake' and hasattr(secrets, 'connection_args'):
+        connect_args.update(secrets.connection_args(registration.secret_ref))
     engine = create_engine(url, pool_size=registration.pool_size, max_overflow=0,
         pool_timeout=registration.pool_timeout_seconds, pool_pre_ping=True, pool_recycle=300, connect_args=connect_args)
     caps = ConnectorCapabilities(aggregation=True, statistics=kind == 'postgres', plan_inspection=kind == 'postgres',
@@ -207,3 +209,4 @@ class ConnectorRouter(StructuredBackend):
             for _, connector in self._handles.values():
                 connector.close()
             self._handles.clear()
+

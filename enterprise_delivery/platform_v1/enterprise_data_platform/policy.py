@@ -190,6 +190,11 @@ class PolicyEngine:
                     if identities: branches.append({'field': field, 'op': 'array_overlaps', 'value': identities})
                     source_acls.append({'or': branches})
         mandatory_filter = and_filters(product.mandatory_filter, grant_filter, tenant_filter, *source_acls)
+        from .principal_filters import bind_filter
+        try:
+            mandatory_filter = bind_filter(mandatory_filter, principal)
+        except ValueError:
+            return PolicyDecision(allowed=False, reason='required principal binding is unavailable or invalid')
 
         return PolicyDecision(
             allowed=True,

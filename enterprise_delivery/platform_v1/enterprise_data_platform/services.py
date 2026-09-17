@@ -310,6 +310,9 @@ class PlatformService:
 
     def retrieve(self, principal: Principal, dataset_id: str, request: RetrieveRequest) -> RetrievalResponse:
         product, decision = self._decision(principal, dataset_id, Capability.RETRIEVE)
+        if not product.retrieval:
+            raise CapabilityUnavailable('dataset has no retrieval profile')
+        mode = self.resolve_retrieval_mode(product, request.mode)
         if self.chunks is None and product.retrieval.backend != "postgres":
             raise CapabilityUnavailable("canonical chunk store is not configured")
         self._validate_user_fields(request, decision)
@@ -328,11 +331,11 @@ class PlatformService:
                 top_k = min(top_k, gd.max_top_k)
             require_citations = gd.require_citations
 
-        if request.mode == "keyword":
+        if mode == "keyword":
             if self.keyword is None:
                 raise CapabilityUnavailable("keyword backend is not configured")
             hits = self.keyword.search(product=product, query=request.query, filter_expr=combined_filter, top_k=top_k)
-        elif request.mode == "vector":
+        elif mode == "vector":
             hits = self._vector_hits_for_retrieve(product, request.query, combined_filter, top_k)
         else:
             if self.keyword is None:
@@ -359,6 +362,24 @@ class PlatformService:
         results = self._finalize_hits(principal, product, decision, hits, combined_filter,
             query=request.query, top_k=top_k, return_text=True, return_metadata=request.include_metadata)
         return self._retrieval_response(product, results)
+
+    def resolve_retrieval_mode(self, product, requested='auto'):
+        """Resolve availability before any source query; explicit modes fail closed."""
+        profile = product.retrieval
+        keyword = bool(profile and self.keyword is not None and Capability.KEYWORD in product.capabilities)
+        vector = bool(profile and profile.vector and self.vector is not None and self.embedder is not None
+                      and Capability.VECTOR in product.capabilities)
+        supported = {'keyword': keyword, 'vector': vector,
+                     'hybrid': keyword and vector and Capability.HYBRID in product.capabilities}
+        if requested == 'auto':
+            for candidate in ('hybrid', 'vector', 'keyword'):
+                if supported[candidate]:
+                    return candidate
+        elif supported.get(requested):
+            return requested
+        elif requested == 'hybrid' and profile and profile.allow_keyword_fallback and keyword:
+            return 'keyword'
+        raise CapabilityUnavailable('requested retrieval mode is not configured')
 
     def _finalize_hits(self, principal, product, decision, hits, filter_expr, *, query, top_k, return_text, return_metadata):
         is_native = product.retrieval.backend == 'postgres'

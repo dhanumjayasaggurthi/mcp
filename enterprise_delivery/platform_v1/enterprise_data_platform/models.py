@@ -106,6 +106,7 @@ class PostgresRetrievalProfile(BaseModel):
     cast_vector: bool = False
     source_version_field: Optional[str] = "updated_at"
     keyword_tsvector_field: Optional[str] = None
+    keyword_mode: Literal['full_text', 'contains'] = 'full_text'
     text_search_config: str = Field(default="pg_catalog.english", pattern=r"^[a-zA-Z_][a-zA-Z0-9_.]*$")
     acl_subjects_field: Optional[str] = None
     acl_groups_field: Optional[str] = None
@@ -187,7 +188,8 @@ class DataProduct(BaseModel):
             if self.retrieval.text.source_fields != [mapping.text_field]:
                 raise ValueError("native retrieval uses existing chunk text without re-chunking")
         from .query_validation import validate_filter
-        validate_filter(self, self.mandatory_filter)
+        from .principal_filters import bind_filter
+        validate_filter(self, bind_filter(self.mandatory_filter, validate_only=True))
 
         missing_identity = [f for f in self.identity_fields if f not in fmap]
         if missing_identity:
@@ -345,7 +347,7 @@ class RetrieveRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     query: str = Field(min_length=1, max_length=20000)
-    mode: Literal["keyword", "vector", "hybrid"] = "hybrid"
+    mode: Literal["auto", "keyword", "vector", "hybrid"] = "auto"
     filter: Optional[Dict[str, Any]] = None
     top_k: int = Field(default=10, ge=1, le=1000)
     include_metadata: bool = True

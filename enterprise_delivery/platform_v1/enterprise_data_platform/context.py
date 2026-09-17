@@ -14,6 +14,8 @@ class ExecutionContext:
     cancelled: Event = field(default_factory=Event)
     workload: str = 'interactive'
     idempotency_key: str | None = None
+    control_reads: dict = field(default_factory=dict)
+    decisions: dict = field(default_factory=dict)
 
     def remaining(self):
         remaining = self.deadline - time.monotonic()
@@ -40,3 +42,4 @@ def execution_context(context=None):
 def trace_id():
     context = current_context.get()
     return context.trace_id if context else uuid.uuid4().hex
+

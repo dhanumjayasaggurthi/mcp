@@ -3,7 +3,7 @@ from __future__ import annotations
 import threading
 from typing import Any, Callable, Dict, Mapping, Optional, Sequence, Tuple
 
-from sqlalchemy import MetaData, Table, and_, case, func, or_, select, text
+from sqlalchemy import MetaData, Table, and_, case, func, or_, select, text, tuple_
 from .cache import BoundedCache, CacheClass, CacheKey
 from .context import current_context
 from .durable import fingerprint
@@ -126,7 +126,7 @@ class SQLAlchemyStructuredBackend(StructuredBackend):
         # literals stay bound parameters even in the EXPLAIN prefix.
         parameters = {key: compiled._bind_processors[key](value) if key in compiled._bind_processors else value
                       for key, value in compiled.params.items()}
-        value = conn.exec_driver_sql('EXPLAIN (FORMAT JSON) ' + str(compiled), parameters,
+        value = conn.exec_driver_sql('EXPLAIN (FORMAT JSON, VERBOSE) ' + str(compiled), parameters,
             execution_options={'stream_results': False, 'yield_per': None}).scalar_one()
         root = value[0]['Plan']
         scans = []
@@ -135,9 +135,12 @@ class SQLAlchemyStructuredBackend(StructuredBackend):
                 # Rows removed by filters are not in Plan Rows. Sequential
                 # scans therefore use table cardinality from pg_class below.
                 estimate = int(node.get('Plan Rows', 0))
-                if node.get('Node Type') in {'Seq Scan', 'Parallel Seq Scan'} and node.get('Relation Name'):
-                    rows = conn.execute(text('SELECT MAX(reltuples) FROM pg_class WHERE relname=:name'),
-                        {'name': node['Relation Name']}).scalar()
+                if (node.get('Node Type') in {'Seq Scan', 'Parallel Seq Scan'} or
+                        (node.get('Filter') and not node.get('Index Cond'))) and node.get('Relation Name'):
+                    rows = conn.execute(text('SELECT c.reltuples FROM pg_catalog.pg_class c '
+                        'JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace '
+                        'WHERE c.relname=:name AND n.nspname=COALESCE(:schema,current_schema())'),
+                        {'name': node['Relation Name'], 'schema': node.get('Schema')}).scalar()
                     estimate = max(estimate, int(rows or 0))
                 scans.append(estimate)
             for child in node.get('Plans', []):
@@ -285,6 +288,11 @@ class SQLAlchemyStructuredBackend(StructuredBackend):
     @staticmethod
     def _keyset_after(table: Table, order_by: Sequence[SortField], position: Mapping[str, Any]):
         """Lexicographic continuation predicate matching ORDER BY ... NULLS LAST."""
+        if order_by and all(not table.c[s.field].nullable and position.get(s.field) is not None for s in order_by):
+            if len({s.direction for s in order_by}) == 1:
+                left = tuple_(*(table.c[s.field] for s in order_by))
+                right = tuple_(*(position[s.field] for s in order_by))
+                return left > right if order_by[0].direction == 'asc' else left < right
         branches = []
         prefix = []
         for item in order_by:
@@ -296,7 +304,7 @@ class SQLAlchemyStructuredBackend(StructuredBackend):
             else:
                 equal = col == value
                 directional = col > value if item.direction == "asc" else col < value
-                compare = or_(directional, col.is_(None))
+                compare = or_(directional, col.is_(None)) if col.nullable else directional
             if compare is not None:
                 branches.append(and_(*prefix, compare))
             prefix.append(equal)

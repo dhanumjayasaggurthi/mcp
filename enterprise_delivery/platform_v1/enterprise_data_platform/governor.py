@@ -66,23 +66,31 @@ class ResourceGovernor:
         lease_id = str(uuid.uuid4())
         duration = min(context.remaining(), self.limits.max_seconds)
         with self.store.engine.begin() as conn:
-            # Fixed lock order prevents deadlocks when scopes overlap.
+            # Batch the same authoritative checks; retain strict cross-replica limits.
+            names = [scope for scope, _ in scope_limits]
+            if conn.dialect.name == 'postgresql':
+                from sqlalchemy.dialects.postgresql import insert as upsert
+            else:
+                from sqlalchemy.dialects.sqlite import insert as upsert
+            conn.execute(upsert(quota_state).values([dict(scope=n, window=0, used=0) for n in names]).on_conflict_do_nothing())
+            rows = {r['scope']: r for r in conn.execute(select(quota_state).where(quota_state.c.scope.in_(names))
+                .order_by(quota_state.c.scope).with_for_update()).mappings()}
+            now = db_now(conn)
+            conn.execute(delete(leases).where(leases.c.scope.in_(names), leases.c.expires_at <= now))
+            counts = dict(conn.execute(select(leases.c.scope,func.count()).where(leases.c.scope.in_(names)).group_by(leases.c.scope)).all())
             for scope, cap in scope_limits:
-                ensure_row(conn, quota_state, dict(scope=scope, window=0, used=0))
-                row = conn.execute(select(quota_state).where(quota_state.c.scope == scope).with_for_update()).mappings().one()
-                now = db_now(conn)
-                conn.execute(delete(leases).where(leases.c.scope == scope, leases.c.expires_at <= now))
-                active = conn.scalar(select(func.count()).select_from(leases).where(leases.c.scope == scope))
-                if active >= cap:
+                if counts.get(scope,0) >= cap:
                     raise Overloaded('concurrency budget exhausted')
                 if scope.startswith('client:'):
+                    row = rows[scope]
                     window = math.floor(now)
                     used = row['used'] if row['window'] == window else 0
                     qps = min(client.rate_limit_rps, self.limits.requests_per_second) if client else self.limits.requests_per_second
                     if used >= qps:
                         raise Overloaded('request rate budget exhausted')
-                    conn.execute(update(quota_state).where(quota_state.c.scope == scope).values(window=window, used=used + 1))
-                conn.execute(insert(leases).values(id=lease_id, scope=scope, expires_at=now + duration + 5))
+                    conn.execute(update(quota_state).where(quota_state.c.scope == scope).values(window=window,used=used+1))
+            conn.execute(insert(leases), [dict(id=lease_id,scope=n,expires_at=now+duration+5) for n in names])
+
         try:
             context.remaining()
             yield lease_id
@@ -100,3 +108,4 @@ class ResourceGovernor:
             if used >= limit:
                 raise Overloaded('request budget exhausted')
             conn.execute(update(quota_state).where(quota_state.c.scope == scope).values(window=window, used=used+1))
+
