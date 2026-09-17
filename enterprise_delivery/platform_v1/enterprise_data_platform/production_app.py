@@ -14,7 +14,7 @@ from .chunks import SQLChunkStore
 from .compatibility import AliasRegistration, register_compatibility
 from .connectors import ConnectorRouter, SourceRegistration
 from .cursor import EncryptedCursorCodec
-from .durable import RelationalStore, SQLCatalog, SQLControlState, SQLPolicyEngine, SQLRegistry, audits, jobs, objects, now_iso
+from .durable import RelationalStore, SQLCatalog, SQLControlState, SQLPolicyEngine, SQLRegistry, audits, jobs, objects, now_iso, configure_control_engine
 from .durable_exports import DurableExportBackend, S3ObjectStorage
 from .durable_promotion import SQLIndexPromotionController
 from .execution import GovernedService
@@ -110,15 +110,21 @@ class Runtime:
 
 
 def control_engine(secrets):
+    from .configuration import ControlDatabaseConfig
+    database = ControlDatabaseConfig.from_environment()
     dsn = secrets.resolve(required('EDP_CONTROL_DSN_REF'))
     from sqlalchemy.engine import make_url
     url = make_url(dsn)
     if url.get_backend_name() != 'postgresql':
         raise ValueError('production control DSN requires PostgreSQL')
-    return create_engine(url, pool_size=int(os.getenv('EDP_CONTROL_POOL_SIZE', '10')), max_overflow=0,
-        pool_timeout=2, pool_pre_ping=True, pool_recycle=300,
-        connect_args={'connect_timeout': 5, 'sslmode': 'verify-full',
-            'options': '-c statement_timeout=5000 -c lock_timeout=2000 -c idle_in_transaction_session_timeout=35000'})
+    engine = create_engine(url, pool_size=database.pool_size, max_overflow=database.max_overflow,
+        pool_timeout=database.pool_timeout_seconds, pool_pre_ping=database.pool_pre_ping,
+        pool_recycle=database.pool_recycle_seconds,
+        connect_args={'connect_timeout': database.connect_timeout_seconds, 'sslmode': database.ssl_mode,
+            'options': f'-c statement_timeout={database.statement_timeout_ms} '
+                       f'-c lock_timeout={database.lock_timeout_ms} '
+                       f'-c idle_in_transaction_session_timeout={database.idle_transaction_timeout_ms}'})
+    return configure_control_engine(engine)
 
 
 def build_runtime():

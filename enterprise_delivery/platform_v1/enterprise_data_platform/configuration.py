@@ -1,6 +1,7 @@
 """Optional INI configuration. Explicit environment settings take precedence."""
 import configparser
 import os
+from dataclasses import dataclass
 from pathlib import Path
 
 from sqlalchemy.engine import URL
@@ -10,7 +11,17 @@ from .identity import MountedSecretProvider
 SETTINGS = {
     'app': {'environment': 'EDP_ENVIRONMENT', 'cursor_secret_ref': 'EDP_CURSOR_SECRET_REF',
             'secret_dir': 'EDP_SECRET_DIR', 'resource_limits': 'EDP_RESOURCE_LIMITS'},
-    'database': {'dsn_ref': 'EDP_CONTROL_DSN_REF', 'pool_size': 'EDP_CONTROL_POOL_SIZE'},
+    'database': {'dsn_ref': 'EDP_CONTROL_DSN_REF', 'pool_size': 'EDP_CONTROL_POOL_SIZE',
+                 'schema': 'EDP_CONTROL_SCHEMA', 'connect_timeout_seconds': 'EDP_CONTROL_CONNECT_TIMEOUT_SECONDS',
+                 'pool_timeout_seconds': 'EDP_CONTROL_POOL_TIMEOUT_SECONDS',
+                 'pool_recycle_seconds': 'EDP_CONTROL_POOL_RECYCLE_SECONDS',
+                 'pool_pre_ping': 'EDP_CONTROL_POOL_PRE_PING',
+                 'max_overflow': 'EDP_CONTROL_MAX_OVERFLOW', 'ssl_mode': 'EDP_CONTROL_SSL_MODE',
+                 'statement_timeout_ms': 'EDP_CONTROL_STATEMENT_TIMEOUT_MS',
+                 'lock_timeout_ms': 'EDP_CONTROL_LOCK_TIMEOUT_MS',
+                 'idle_transaction_timeout_ms': 'EDP_CONTROL_IDLE_TRANSACTION_TIMEOUT_MS',
+                 'partition_count': 'EDP_CONTROL_PARTITION_COUNT',
+                 'migration_lock_id': 'EDP_CONTROL_MIGRATION_LOCK_ID'},
     'oidc': {'issuer': 'EDP_OIDC_ISSUER', 'audience': 'EDP_OIDC_AUDIENCE', 'jwks_url': 'EDP_OIDC_JWKS_URL', 'required_scope': 'EDP_OIDC_REQUIRED_SCOPE', 'allowed_client_ids': 'EDP_OIDC_ALLOWED_CLIENT_IDS'},
     'authorization': {'admin_group_ids': 'EDP_ADMIN_GROUP_IDS', 'admin_app_roles': 'EDP_ADMIN_APP_ROLES', 'admin_scope': 'EDP_ADMIN_SCOPE'},
     'search': {'endpoint': 'EDP_SEARCH_URL', 'token_ref': 'EDP_SEARCH_TOKEN_REF'},
@@ -19,6 +30,69 @@ SETTINGS = {
     'export': {'bucket': 'EDP_EXPORT_BUCKET', 'kms_key_id': 'EDP_EXPORT_KMS_KEY_ID', 'retention_seconds': 'EDP_EXPORT_RETENTION_SECONDS'},
     'processing': {'queue_capacity': 'EDP_QUEUE_CAPACITY'},
 }
+
+
+def _required_integer(name, *, minimum, maximum):
+    raw = os.getenv(name)
+    if not raw:
+        raise RuntimeError(name + ' is required')
+    try:
+        value = int(raw)
+    except ValueError:
+        raise ValueError(name + ' must be an integer') from None
+    if not minimum <= value <= maximum:
+        raise ValueError(f'{name} must be between {minimum} and {maximum}')
+    return value
+
+
+@dataclass(frozen=True)
+class ControlDatabaseConfig:
+    schema: str
+    pool_size: int
+    max_overflow: int
+    connect_timeout_seconds: int
+    pool_timeout_seconds: int
+    pool_recycle_seconds: int
+    pool_pre_ping: bool
+    statement_timeout_ms: int
+    lock_timeout_ms: int
+    idle_transaction_timeout_ms: int
+    partition_count: int
+    migration_lock_id: int
+    ssl_mode: str
+
+    @classmethod
+    def from_environment(cls):
+        schema = control_schema_from_environment()
+        ssl_mode = os.getenv('EDP_CONTROL_SSL_MODE', '')
+        if ssl_mode not in {'verify-full', 'verify-ca', 'require'}:
+            raise ValueError('EDP_CONTROL_SSL_MODE must be verify-full, verify-ca, or require')
+        pre_ping = os.getenv('EDP_CONTROL_POOL_PRE_PING', '').lower()
+        if pre_ping not in {'true', 'false'}:
+            raise ValueError('EDP_CONTROL_POOL_PRE_PING must be true or false')
+        return cls(schema=schema,
+            pool_size=_required_integer('EDP_CONTROL_POOL_SIZE', minimum=1, maximum=1000),
+            max_overflow=_required_integer('EDP_CONTROL_MAX_OVERFLOW', minimum=0, maximum=1000),
+            connect_timeout_seconds=_required_integer('EDP_CONTROL_CONNECT_TIMEOUT_SECONDS', minimum=1, maximum=300),
+            pool_timeout_seconds=_required_integer('EDP_CONTROL_POOL_TIMEOUT_SECONDS', minimum=1, maximum=300),
+            pool_recycle_seconds=_required_integer('EDP_CONTROL_POOL_RECYCLE_SECONDS', minimum=1, maximum=86400),
+            pool_pre_ping=pre_ping == 'true',
+            statement_timeout_ms=_required_integer('EDP_CONTROL_STATEMENT_TIMEOUT_MS', minimum=1, maximum=3600000),
+            lock_timeout_ms=_required_integer('EDP_CONTROL_LOCK_TIMEOUT_MS', minimum=1, maximum=3600000),
+            idle_transaction_timeout_ms=_required_integer('EDP_CONTROL_IDLE_TRANSACTION_TIMEOUT_MS', minimum=1, maximum=3600000),
+            partition_count=_required_integer('EDP_CONTROL_PARTITION_COUNT', minimum=1, maximum=1024),
+            migration_lock_id=_required_integer('EDP_CONTROL_MIGRATION_LOCK_ID', minimum=1, maximum=2147483647),
+            ssl_mode=ssl_mode)
+
+
+def control_schema_from_environment():
+    import re
+    schema = os.getenv('EDP_CONTROL_SCHEMA')
+    if not schema:
+        raise ValueError('EDP_CONTROL_SCHEMA is required')
+    if not re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]{0,62}', schema):
+        raise ValueError('EDP_CONTROL_SCHEMA must be a valid unquoted PostgreSQL identifier')
+    return schema
 
 
 class IniSecretProvider:
