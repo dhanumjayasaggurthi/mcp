@@ -115,10 +115,9 @@ def draft_dataset(router, body):
     retrieval = None
     if body.template == 'postgres_chunks':
         if report['dialect'] != 'postgresql': raise ValueError('postgres_chunks requires PostgreSQL')
-        names = {f.name for f in fields}
-        mapping = body.postgres or PostgresRetrievalProfile(
-            source_version_field='updated_at' if 'updated_at' in names else None,
-            citation_fields={k: k for k in ['file_name', 'section_title', 'page_start', 'page_end'] if k in names})
+        if body.postgres is None:
+            raise ValueError('postgres_chunks requires an explicit postgres field mapping')
+        mapping = body.postgres
         for f in fields:
             if f.name in mapping.citation_fields.values(): f.vector_metadata = True
             if f.name in {mapping.acl_subjects_field, mapping.acl_groups_field}:

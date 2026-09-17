@@ -12,6 +12,7 @@ from typing import Generic, TypeVar
 from pydantic import BaseModel
 from sqlalchemy import (JSON, Boolean, Column, Float, Index, Integer, MetaData, String,
                         Table, Text, UniqueConstraint, and_, delete, func, insert, select, update)
+from sqlalchemy.schema import CreateSchema
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.exc import IntegrityError
 
@@ -22,7 +23,11 @@ from .control_state import ResourceNotFound
 from .models import AccessPolicy, DataProduct
 from .policy import PolicyEngine
 
-metadata = MetaData()
+# A translation token keeps one table contract while allowing every deployment to
+# select its own physical PostgreSQL namespace.  It is translated to no schema for
+# SQLite contract tests and to EDP_CONTROL_SCHEMA in production.
+CONTROL_SCHEMA_TOKEN = 'edp_control_namespace'
+metadata = MetaData(schema=CONTROL_SCHEMA_TOKEN)
 document = JSON().with_variant(JSONB(), 'postgresql')
 schema_versions = Table('edp_schema_versions', metadata, Column('version', Integer, primary_key=True))
 objects = Table('edp_objects', metadata,
@@ -101,7 +106,7 @@ class RelationalStore:
     def __init__(self, engine, *, production=True):
         if production and engine.dialect.name != 'postgresql':
             raise ValueError('production control storage requires PostgreSQL')
-        self.engine = engine
+        self.engine = configure_control_engine(engine)
 
     def ready(self):
         with self.engine.connect() as conn:
@@ -268,21 +273,49 @@ class SQLControlState:
         self.indexes = SQLRegistry(store, 'indexes', IndexDeployment)
 
 
+def _control_schema():
+    from .configuration import control_schema_from_environment
+    return control_schema_from_environment()
+
+
+def configure_control_engine(engine):
+    """Apply the physical namespace consistently to all SQL emitted by an engine."""
+    target = _control_schema() if engine.dialect.name == 'postgresql' else None
+    engine.update_execution_options(schema_translate_map={CONTROL_SCHEMA_TOKEN: target})
+    return engine
+
+
 def migrate(engine):
     """Run separately with DDL credentials before starting API/worker replicas."""
+    engine = configure_control_engine(engine)
+    database = None
+    if engine.dialect.name == 'postgresql':
+        from .configuration import ControlDatabaseConfig
+        database = ControlDatabaseConfig.from_environment()
     with engine.begin() as conn:
         if conn.dialect.name == 'postgresql':
-            conn.exec_driver_sql('SELECT pg_advisory_xact_lock(726188241)')
+            conn.exec_driver_sql('SELECT pg_advisory_xact_lock(%s)', (database.migration_lock_id,))
+            conn.execute(CreateSchema(database.schema, if_not_exists=True))
         metadata.create_all(conn)
         if conn.dialect.name == 'postgresql':
+            quote = conn.dialect.identifier_preparer.quote
+            namespace = quote(database.schema)
             for name in ['edp_chunks', 'edp_record_versions']:
-                for part in range(32):
-                    conn.exec_driver_sql(f'CREATE TABLE IF NOT EXISTS {name}_p{part} PARTITION OF {name} FOR VALUES WITH (MODULUS 32, REMAINDER {part})')
+                for part in range(database.partition_count):
+                    child = quote(f'{name}_p{part}')
+                    parent = quote(name)
+                    conn.exec_driver_sql(f'CREATE TABLE IF NOT EXISTS {namespace}.{child} PARTITION OF '
+                                         f'{namespace}.{parent} FOR VALUES WITH (MODULUS {database.partition_count}, REMAINDER {part})')
         if conn.dialect.name == 'postgresql':
-            conn.exec_driver_sql("CREATE OR REPLACE FUNCTION edp_reject_audit_mutation() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'append-only audit relation'; END; $$")
+            function = f'{namespace}.{quote("edp_reject_audit_mutation")}'
+            conn.exec_driver_sql(f"CREATE OR REPLACE FUNCTION {function}() RETURNS trigger LANGUAGE plpgsql "
+                                 "AS $$ BEGIN RAISE EXCEPTION 'append-only audit relation'; END; $$")
             for table_name in ['edp_audit', 'edp_object_history']:
-                conn.exec_driver_sql(f'DROP TRIGGER IF EXISTS edp_append_only ON {table_name}')
-                conn.exec_driver_sql(f'CREATE TRIGGER edp_append_only BEFORE UPDATE OR DELETE OR TRUNCATE ON {table_name} FOR EACH STATEMENT EXECUTE FUNCTION edp_reject_audit_mutation()')
+                table = f'{namespace}.{quote(table_name)}'
+                trigger = quote('edp_append_only')
+                conn.exec_driver_sql(f'DROP TRIGGER IF EXISTS {trigger} ON {table}')
+                conn.exec_driver_sql(f'CREATE TRIGGER {trigger} BEFORE UPDATE OR DELETE OR TRUNCATE ON {table} '
+                                     f'FOR EACH STATEMENT EXECUTE FUNCTION {function}()')
         current = conn.scalar(select(func.max(schema_versions.c.version)))
         if current is None:
             for kind in ['export', 'ingestion']:
@@ -290,4 +323,3 @@ def migrate(engine):
             conn.execute(insert(schema_versions).values(version=1))
         elif current != 1:
             raise RuntimeError('unsupported control schema version')
-
